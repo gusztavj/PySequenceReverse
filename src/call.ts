@@ -13,16 +13,16 @@ export interface CallHierarchy {
     sequenceNumber?: string
 }
 
-function findLongestCommonPrefix(strs: string[]): string {
-    if (strs.length === 0) {
+function findLongestCommonPrefix(paths: string[]): string {
+    if (paths.length === 0) {
         return "";
     }
 
     // Sort the array to bring potentially common prefixes together
-    strs.sort();
+    paths.sort();
 
-    const firstStr = strs[0];
-    const lastStr = strs[strs.length - 1];
+    const firstStr = paths[0];
+    const lastStr = paths[paths.length - 1];
     let prefix = "";
 
     for (let i = 0; i < firstStr.length; i++) {
@@ -36,17 +36,22 @@ function findLongestCommonPrefix(strs: string[]): string {
     return prefix;
 }
 
-let  workspaceRoot: string = '';
+let workspaceRoot: string = '';
 
 function trimUri(uriOrString: string|vscode.Uri): string {
     let uriString = typeof uriOrString === 'string' ? uriOrString : uriOrString.toString();
     return uriString.replace(workspaceRoot, "");
 }
 
-async function findClassName(uri: vscode.Uri, position: vscode.Position): Promise<string | undefined> {
+function getFunctionName(uri: vscode.Uri): string {
+    return `${uri.toString().split('/').pop()}::` || "";
+}
+
+
+async function findClassName(uri: vscode.Uri, position: vscode.Position): Promise<string> {
     // Load the document
     const document = await vscode.workspace.openTextDocument(uri);
-    return parseToFindClassName(document.getText(), position);
+    return parseToFindClassName(document.getText(), position) || "";
 }
 
 function parseToFindClassName(documentText: string, position: vscode.Position): string | undefined {
@@ -65,7 +70,7 @@ function parseToFindClassName(documentText: string, position: vscode.Position): 
         }
 
         // Update the current indentation level to the line's indentation if it's less indented than the current level
-        if (lineIndentation < currentIndentation) {
+        if (lineIndentation < currentIndentation && line.trim().length > 0) {
             currentIndentation = lineIndentation;
         }
     }
@@ -144,7 +149,7 @@ export async function getCallHierarchy(
     const command = direction === 'Outgoing' ? 'vscode.provideOutgoingCalls' : 'vscode.provideIncomingCalls'
     const visited: { [key: string]: boolean } = {};
     
-    var edgeSequenceNumber: string;
+    let edgeSequenceNumber: string;
 
     let participants: Set<string> = new Set();    
     let messages: string[] = [];
@@ -154,14 +159,18 @@ export async function getCallHierarchy(
         output.appendLine('resolve: ' + node.name)
         const id  = `"${node.uri}#${node.name}@${node.range.start.line}:${node.range.start.character}"`
 
-        if (visited[id]) return
+        if (visited[id]) {
+            return;
+        }
+
         visited[id] = true
 
         const calls:
             | vscode.CallHierarchyOutgoingCall[]
-            | vscode.CallHierarchyIncomingCall[] = await vscode.commands.executeCommand(command, node)
+            | vscode.CallHierarchyIncomingCall[] = await vscode.commands.executeCommand(command, node);
 
-        var localSequenceNumberIx: number = 0;
+        
+        let localSequenceNumberIx: number = 0;
             
         await Promise.all(calls.map(async (call) => {
             let next: CallHierarchyItem
@@ -210,16 +219,26 @@ export async function getCallHierarchy(
                 }
             }
 
-            if (skip) return
+            if (skip) {
+                return;
+            }
 
             localSequenceNumberIx++;
             
+            const participantName = 
+                `${trimUri(node.uri)}/${findClassName(node.uri, node.selectionRange.start)}`;
             
-            participants.add(`${trimUri(node.uri)}`);
+            const participantNameWithAlias = 
+                `${participantName} as ${trimUri(node.uri)}<br>${findClassName(node.uri, node.selectionRange.start)}`;
+
+            participants.add(participantNameWithAlias);
             
             // Assemble label based on call direction and nesting level
-            if (call instanceof vscode.CallHierarchyOutgoingCall) {                    
-                messages.push(`    ${trimUri(node.uri)} ->> ${trimUri(call.to.uri)}: ${call.to.name}`);
+            if (call instanceof vscode.CallHierarchyOutgoingCall) {
+                
+                const otherParticipantName = `${trimUri(call.to.uri)}/${findClassName(call.to.uri, call.to.selectionRange.start)}`;
+                
+                messages.push(`    ${participantName} ->> ${otherParticipantName}: ${call.to.name}`);
 
                 edgeSequenceNumber = 
                     (parentSequenceNumber === "") 
@@ -227,7 +246,10 @@ export async function getCallHierarchy(
                     : `${parentSequenceNumber}.${localSequenceNumberIx.toString()}`;
                 
             } else {
-                messages.push(`    ${trimUri(call.from.uri)} ->> ${trimUri(node.uri)}: ${node.name}`);
+
+                const otherParticipantName = `${trimUri(call.from.uri)}/${findClassName(call.from.uri, call.from.selectionRange.start)}`;
+
+                messages.push(`    ${otherParticipantName} ->> ${participantName}: ${node.name}`);
 
                 edgeSequenceNumber = 
                     (parentSequenceNumber === "") 
@@ -237,11 +259,11 @@ export async function getCallHierarchy(
                         : `${localSequenceNumberIx.toString()} \u21A3 ${parentSequenceNumber}`;
             }
 
-            edge.sequenceNumber = edgeSequenceNumber
+            edge.sequenceNumber = edgeSequenceNumber;
 
-            addEdge(edge)
-            await traverse(next, edgeSequenceNumber)
-        }))
+            addEdge(edge);
+            await traverse(next, edgeSequenceNumber);
+        }));
     }
 
     await traverse(root, "")
@@ -256,19 +278,31 @@ async function saveDataToFile(participants: Set<string>, messages: string[]) {
     let commonRoot = findLongestCommonPrefix(Array.from(participants));
 
     const prettyParticipants = new Set<string>();
-
     participants.forEach(participant => {
-        const prettyName = participant.replace(commonRoot, "");
+        let prettyName = participant.replace(commonRoot, "");
+        while (true) {
+            const evenPrettierName = prettyName.replace(commonRoot, "");
+            if (evenPrettierName === prettyName) {
+                break;
+            }
+            prettyName = evenPrettierName;
+        } 
+
         prettyParticipants.add(`    participant ${prettyName}`);
     });
     
     const prettyMessages: string[] = [""];
-
     messages.forEach(message => {
-        // Simplest is to do it twice as it contains two instances of the common root
-        message = message.replace(commonRoot, "");
-        message = message.replace(commonRoot, "");
-        prettyMessages.push(message)
+        let prettyName = message.replace(commonRoot, "");
+        while (true) {
+            const evenPrettierName = prettyName.replace(commonRoot, "");
+            if (evenPrettierName === prettyName) {
+                break;
+            }
+            prettyName = evenPrettierName;
+        } 
+        
+        prettyMessages.push(prettyName);
     });
 
     const participantsStr = Array.from(prettyParticipants).join('\n');
