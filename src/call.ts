@@ -1,5 +1,6 @@
 import { CallHierarchyItem } from 'vscode'
 import * as vscode from 'vscode'
+import * as fs from 'fs';
 import { output } from './extension'
 import { minimatch } from 'minimatch'
 import EventEmitter = require('events')
@@ -10,6 +11,73 @@ export interface CallHierarchy {
     to?: CallHierarchyItem
 
     sequenceNumber?: string
+}
+
+function findLongestCommonPrefix(strs: string[]): string {
+    if (strs.length === 0) {
+        return "";
+    }
+
+    // Sort the array to bring potentially common prefixes together
+    strs.sort();
+
+    const firstStr = strs[0];
+    const lastStr = strs[strs.length - 1];
+    let prefix = "";
+
+    for (let i = 0; i < firstStr.length; i++) {
+        if (firstStr.charAt(i) === lastStr.charAt(i)) {
+            prefix += firstStr.charAt(i);
+        } else {
+            break;
+        }
+    }
+
+    return prefix;
+}
+
+let  workspaceRoot: string = '';
+
+function trimUri(uriOrString: string|vscode.Uri): string {
+    let uriString = typeof uriOrString === 'string' ? uriOrString : uriOrString.toString();
+    return uriString.replace(workspaceRoot, "");
+}
+
+async function findClassName(uri: vscode.Uri, position: vscode.Position): Promise<string | undefined> {
+    // Load the document
+    const document = await vscode.workspace.openTextDocument(uri);
+    return parseToFindClassName(document.getText(), position);
+}
+
+function parseToFindClassName(documentText: string, position: vscode.Position): string | undefined {
+    const lines = documentText.split('\n');
+    let currentIndentation = getIndentationLevel(lines[position.line]);
+
+    for (let i = position.line; i >= 0; i--) {
+        const line = lines[i];
+        const lineIndentation = getIndentationLevel(line);
+
+        // Check if the current line is less indented than the method's line and contains a class definition
+        if (lineIndentation < currentIndentation && line.trim().startsWith('class ')) {
+            // Extract the class name from the class definition
+            const classNameMatch = line.match(/class\s+([^\(:]+)/);
+            return classNameMatch ? classNameMatch[1].trim() : undefined;
+        }
+
+        // Update the current indentation level to the line's indentation if it's less indented than the current level
+        if (lineIndentation < currentIndentation) {
+            currentIndentation = lineIndentation;
+        }
+    }
+
+    // No class definition found
+    return undefined;
+}
+
+function getIndentationLevel(line: string): number {
+    // Count leading spaces to determine the indentation level
+    const match = line.match(/^(\s*)/);
+    return match ? match[1].length : 0;
 }
 
 export async function getCallHierarchy(
@@ -24,6 +92,9 @@ export async function getCallHierarchy(
         await getCallHierarchy('Outgoing', root, parentSequenceNumber, addEdge)
         return
     }
+
+    const roots = vscode.workspace.workspaceFolders?.map((f) => f.uri.toString()) ?? []
+    workspaceRoot = findLongestCommonPrefix(roots)
 
     const configs = vscode.workspace.getConfiguration()
     const ignoreGlobs = configs.get<string[]>('chartographer-extra.ignoreOnGenerate') ?? []
@@ -75,6 +146,10 @@ export async function getCallHierarchy(
     
     var edgeSequenceNumber: string;
 
+    let participants: Set<string> = new Set();    
+    let messages: string[] = [];
+    
+
     const traverse = async (node: CallHierarchyItem, parentSequenceNumber: string) => {
         output.appendLine('resolve: ' + node.name)
         const id  = `"${node.uri}#${node.name}@${node.range.start.line}:${node.range.start.character}"`
@@ -90,9 +165,7 @@ export async function getCallHierarchy(
             
         await Promise.all(calls.map(async (call) => {
             let next: CallHierarchyItem
-            let edge: CallHierarchy
-            
-            
+            let edge: CallHierarchy                        
             
             if (call instanceof vscode.CallHierarchyOutgoingCall) {
                 edge = { item: node, to: call.to }
@@ -101,6 +174,7 @@ export async function getCallHierarchy(
                 edge = { item: node, from: call.from }
                 next = call.from
             }
+
 
             let skip = false
             for (const glob of ignoreGlobs) {
@@ -139,14 +213,22 @@ export async function getCallHierarchy(
             if (skip) return
 
             localSequenceNumberIx++;
-
+            
+            
+            participants.add(`${trimUri(node.uri)}`);
+            
             // Assemble label based on call direction and nesting level
-            if (call instanceof vscode.CallHierarchyOutgoingCall) {
+            if (call instanceof vscode.CallHierarchyOutgoingCall) {                    
+                messages.push(`    ${trimUri(node.uri)} ->> ${trimUri(call.to.uri)}: ${call.to.name}`);
+
                 edgeSequenceNumber = 
                     (parentSequenceNumber === "") 
                     ? `${localSequenceNumberIx.toString()}` 
                     : `${parentSequenceNumber}.${localSequenceNumberIx.toString()}`;
+                
             } else {
+                messages.push(`    ${trimUri(call.from.uri)} ->> ${trimUri(node.uri)}: ${node.name}`);
+
                 edgeSequenceNumber = 
                     (parentSequenceNumber === "") 
                     ? `\u21A3 ${localSequenceNumberIx.toString()}` 
@@ -163,6 +245,56 @@ export async function getCallHierarchy(
     }
 
     await traverse(root, "")
+    saveDataToFile(participants, messages)
+    
+}
+
+
+
+async function saveDataToFile(participants: Set<string>, messages: string[]) {
+
+    let commonRoot = findLongestCommonPrefix(Array.from(participants));
+
+    const prettyParticipants = new Set<string>();
+
+    participants.forEach(participant => {
+        const prettyName = participant.replace(commonRoot, "");
+        prettyParticipants.add(`    participant ${prettyName}`);
+    });
+    
+    const prettyMessages: string[] = [""];
+
+    messages.forEach(message => {
+        // Simplest is to do it twice as it contains two instances of the common root
+        message = message.replace(commonRoot, "");
+        message = message.replace(commonRoot, "");
+        prettyMessages.push(message)
+    });
+
+    const participantsStr = Array.from(prettyParticipants).join('\n');
+    const messagesStr = prettyMessages.join('\n');
+    const combinedStr = `%%{init: {'theme':'forest'}}%%\nsequenceDiagram\n${participantsStr}\n\n${messagesStr}`;
+
+    // Retrieve the current workspace root path
+    const {workspaceFolders} = vscode.workspace;
+    const defaultUri = workspaceFolders && workspaceFolders.length > 0 
+        ? vscode.Uri.file(workspaceFolders[0].uri.fsPath) // Use the first workspace folder as default
+        : undefined;
+
+    const uri = await vscode.window.showSaveDialog({
+        filters: { 
+            'Mermaid Diagram files (*.mmd;*.mermaid)': ['*.mmd;', '*.mermaid'], 
+            'All files (*.*)': ['*.*'],
+        },
+        defaultUri: defaultUri // Set the default save location
+    });
+
+    if (!uri) {
+        return;
+    } // User canceled the dialog
+
+    await fs.promises.writeFile(uri.fsPath, combinedStr, 'utf8');
+    vscode.window.showInformationMessage('Data saved successfully!');
 }
 
 function isEqual(a: CallHierarchyItem, b: CallHierarchyItem) {
