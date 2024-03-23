@@ -140,7 +140,7 @@ async function buildCallHierarchy(
         parentSequenceNumber: string,
         addEdge: (edge: CallHierarchy) => void,
         participants: Set<string>,
-        messages: string[]    
+        messages: string[] | undefined   
     ) 
 {
     if (direction === 'Both') {
@@ -200,10 +200,9 @@ async function buildCallHierarchy(
     const command = direction === 'Outgoing' ? 'vscode.provideOutgoingCalls' : 'vscode.provideIncomingCalls'
     const visited: { [key: string]: boolean } = {};
     
-    let edgeSequenceNumber: string;
-    
+    let edgeSequenceNumber: string;     
 
-    const traverse = async (node: CallHierarchyItem, parentSequenceNumber: string, depth: number) => {        
+    const traverse = async (node: CallHierarchyItem, parentSequenceNumber: string, depth: number): Promise<string[] | undefined> => {        
         
         const id  = `"${node.uri}#${node.name}@${node.range.start.line}:${node.range.start.character}"`
         
@@ -222,16 +221,28 @@ async function buildCallHierarchy(
         logIndent()
         
         log(`Call list obtained with ${calls.length} items`)
+
         
         let localSequenceNumberIx: number = 0;
         let callIx: number = 0;
+        let myMessages: string[] = [];
             
         for (const call of calls) {            
 
+            let beforeNestedCalls: string[] = [];
+            let afterNestedCalls: string[] = [];
+            let nestedCalls: string[] | undefined = [];
+                
+            let callerParticipantName = "";
+            let calledParticipantName = "";            
+            let message = "";            
+            let messageType: string = "";
+            let returnMessageType: string = "";
+
             let whatsGoingOn = "";
-            let callFrom = "";
-            let callTo = "";
-            let callName = "";
+            let callFromToken = "";
+            let callToToken = "";
+            let callNameToken = "";
 
             // log(`Processing call ${++callIx} of ${calls.length}`);
 
@@ -248,16 +259,16 @@ async function buildCallHierarchy(
 
                 // log(`- Identified as an outgoing call from ${hiMethod(node.name)} to ${hiMethod(call.to.name)}`);
                 whatsGoingOn += ` from ${hiMethod(node.name)} to ${hiMethod(call.to.name)}`
-                callFrom = hiMethod(node.name)
-                callTo = hiMethod(call.to.name)
+                callFromToken = hiMethod(node.name)
+                callToToken = hiMethod(call.to.name)
             } else {
                 edge = { item: node, from: call.from };
                 next = call.from;
 
                 // log(`- Identified as an incoming call from ${hiMethod(call.from.name)} to ${hiMethod(node.name)}`);
                 whatsGoingOn += ` from ${hiMethod(call.from.name)} to ${hiMethod(node.name)}`;
-                callFrom = hiMethod(call.from.name)
-                callTo = hiMethod(node.name)
+                callFromToken = hiMethod(call.from.name)
+                callToToken = hiMethod(node.name)
             }            
 
             let skip = false
@@ -308,7 +319,6 @@ async function buildCallHierarchy(
             }
 
             
-
             localSequenceNumberIx++;
             
             const participantClassName = await findClassName(node.uri, node.selectionRange.start);
@@ -322,9 +332,6 @@ async function buildCallHierarchy(
 
             //log(`Identified participant ${hiObject(participantClassName)} with FQN [${participantName}]`);
             
-            let messageType: string = "";
-            let returnFrom: string = "";
-            let returnTo: string = "";
 
             // Assemble label based on call direction and nesting level
             if (call instanceof vscode.CallHierarchyOutgoingCall) {
@@ -337,24 +344,23 @@ async function buildCallHierarchy(
                     ? `${localSequenceNumberIx.toString()}` 
                     : `${parentSequenceNumber}.${localSequenceNumberIx.toString()}`;
                                 
-                callFrom = `${hiObject(participantClassName)}.${callFrom}`
-                callTo = hiObject(otherParticipantClassName)
-                callName = hiMethod(call.to.name)
+                callerParticipantName = participantName;
+                calledParticipantName = otherParticipantName;
+                message = call.to.name;
 
                 if (participantClassName === otherParticipantClassName) {
                     messageType = "->>+";
-                    returnFrom = otherParticipantName;
-                    returnTo = participantName
+                    returnMessageType = "-->>-";
                 } else {
-                    messageType = "->>"
+                    messageType = "->>+";
+                    returnMessageType = "-->>-";
                 }
 
-                messages.push(`    ${participantName} ${messageType} ${otherParticipantName}: ${edgeSequenceNumber}. ${call.to.name}`);
+                callFromToken = `${hiObject(participantClassName)}.${callFromToken}`
+                callToToken = hiObject(otherParticipantClassName)
+                callNameToken = hiMethod(call.to.name)
 
-                // log(`Recorded call ${edgeSequenceNumber}: ${hiObject(participantClassName)} ->> ${hiObject(otherParticipantClassName)}: ${hiMethod(call.to.name)}`);
-                
-                
-            } else {
+            } else { // call instanceof vscode.CallHierarchyIncomingCall
 
                 const otherParticipantClassName = await findClassName(call.from.uri, call.from.selectionRange.start);
                 const otherParticipantName = `${trimUri(call.from.uri)}/${otherParticipantClassName}`;                
@@ -366,42 +372,50 @@ async function buildCallHierarchy(
                         ? `${localSequenceNumberIx.toString()} ${parentSequenceNumber}`
                         : `${localSequenceNumberIx.toString()} \u21A3 ${parentSequenceNumber}`;
 
+                callerParticipantName = otherParticipantName;
+                calledParticipantName = participantName;
+                message = node.name;
+
                 if (participantClassName === otherParticipantClassName) {
                     messageType = "->>+";
-                    returnFrom = participantName;
-                    returnTo = otherParticipantName
+                    returnMessageType = "-->>-";
                 } else {
                     messageType = "->>"
+                    returnMessageType = "-->>";
                 }
-
-                callFrom = `${hiObject(otherParticipantClassName)}.${callFrom}`
-                callTo = hiObject(participantClassName)
-                callName = hiMethod(node.name)
-
-                messages.push(`    ${otherParticipantName} ${messageType} ${participantName}: ${edgeSequenceNumber}. ${node.name}`);
-
-                // log(`Recorded call ${edgeSequenceNumber}: ${hiObject(otherParticipantClassName)} ->> ${hiObject(participantClassName)}: ${hiMethod(node.name)}`);
                 
+                callFromToken = `${hiObject(otherParticipantClassName)}.${callFromToken}`
+                callToToken = hiObject(participantClassName)
+                callNameToken = hiMethod(node.name)
+
             }
 
-            log(`Call ${callIx} added as ${edgeSequenceNumber}: ${callFrom} ->> ${callTo}: ${callName}`); 
+            beforeNestedCalls.push(`\t${callerParticipantName} ${messageType} ${calledParticipantName}: ${edgeSequenceNumber}. ${message}`);
+            afterNestedCalls.unshift(`\t${calledParticipantName} ${returnMessageType} ${callerParticipantName}: ${edgeSequenceNumber}. : return value`);
+
+            log(`Call ${callIx} added as ${edgeSequenceNumber}: ${callFromToken} ->> ${callToToken}: ${callNameToken}`); 
 
             edge.sequenceNumber = edgeSequenceNumber;
-
             addEdge(edge);
 
-            await traverse(next, edgeSequenceNumber, depth + 1);
-            
-            if (returnFrom !== "") {
-                messages.push(`    ${returnFrom} -->>- ${returnTo}: ${edgeSequenceNumber}. return`);
-                log(`${edgeSequenceNumber}: Returning from ${returnFrom} to ${returnTo}`);
-            }
-            
+            nestedCalls = await traverse(next, edgeSequenceNumber, depth + 1);
+
+            let localMessages: string[] = [];
+
+            localMessages.push(...beforeNestedCalls);        
+            localMessages.push(...nestedCalls ?? []);        
+            localMessages.push(...afterNestedCalls);          
+
+            myMessages?.push(...localMessages);
 
             logOutdent();
+                        
         };
 
+        
         logOutdent();
+
+        return myMessages;        
     }
 
     logResetIndentation();
@@ -409,7 +423,7 @@ async function buildCallHierarchy(
     log("Start building sequence diagram");
     log('*'.repeat(80));
 
-    await traverse(root, "", 0)
+    messages?.push(...await traverse(root, "", 0) ?? [])
     
     logResetIndentation();
 
