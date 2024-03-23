@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { output } from './extension'
 import { minimatch } from 'minimatch'
 import EventEmitter = require('events')
+import * as chalk from 'chalk';
 
 export interface CallHierarchy {
     item: CallHierarchyItem
@@ -88,13 +89,63 @@ function getIndentationLevel(line: string): number {
 export async function getCallHierarchy(
         direction: 'Incoming' | 'Outgoing' | 'Both',
         root: CallHierarchyItem,
-        parentSequenceNumber: string,
         addEdge: (edge: CallHierarchy) => void
+    ) 
+{ 
+
+    let participants: Set<string> = new Set();    
+    let messages: string[] = [];
+
+    await buildCallHierarchy(direction, root, "", addEdge, participants, messages);
+
+    await saveDataToFile(participants, messages)
+}
+
+let currentLogIndentationLevel = 0
+
+function log(message: string) {
+    //output.appendLine(`${'\t'.repeat(currentLogIndentationLevel)}${message}`);
+    console.log(`${' '.repeat(currentLogIndentationLevel * 2)}${message}`);
+}
+
+function logIndent() {
+    currentLogIndentationLevel++;
+}
+
+function logOutdent() {
+    if (currentLogIndentationLevel > 0) {
+        currentLogIndentationLevel--;
+    }
+}
+
+const COLOR_YELLOW = '\x1b[33m'; // ANSI code for yellow
+const COLOR_GREEN = '\x1b[32m'; // ANSI code for green
+const COLOR_DEFAULT = '\x1b[0m'; // ANSI code to reset color 
+
+function hiMethod(methodName: string) {
+    return (`${COLOR_YELLOW}${methodName}()${COLOR_DEFAULT}`);
+}
+
+function hiObject(objectName: string) {
+    return (`${COLOR_GREEN}${objectName}${COLOR_DEFAULT}`); 
+}
+
+function logResetIndentation() {
+    currentLogIndentationLevel = 0;
+}
+
+async function buildCallHierarchy(
+        direction: 'Incoming' | 'Outgoing' | 'Both',
+        root: CallHierarchyItem,
+        parentSequenceNumber: string,
+        addEdge: (edge: CallHierarchy) => void,
+        participants: Set<string>,
+        messages: string[]    
     ) 
 {
     if (direction === 'Both') {
-        await getCallHierarchy('Incoming', root, parentSequenceNumber, addEdge)
-        await getCallHierarchy('Outgoing', root, parentSequenceNumber, addEdge)
+        await buildCallHierarchy('Incoming', root, parentSequenceNumber, addEdge, participants, messages)
+        await buildCallHierarchy('Outgoing', root, parentSequenceNumber, addEdge, participants, messages)
         return
     }
 
@@ -150,58 +201,85 @@ export async function getCallHierarchy(
     const visited: { [key: string]: boolean } = {};
     
     let edgeSequenceNumber: string;
-
-    let participants: Set<string> = new Set();    
-    let messages: string[] = [];
     
 
-    const traverse = async (node: CallHierarchyItem, parentSequenceNumber: string) => {
-        output.appendLine('resolve: ' + node.name)
+    const traverse = async (node: CallHierarchyItem, parentSequenceNumber: string, depth: number) => {        
+        
         const id  = `"${node.uri}#${node.name}@${node.range.start.line}:${node.range.start.character}"`
+        
+        log(`Traversing ${hiMethod(node.name)}, PSEQ ${parentSequenceNumber}, FQN ${id}`)
 
-        if (visited[id]) {
-            return;
-        }
+        // if (visited[id]) {
+        //     return;
+        // }
 
-        visited[id] = true
-
-        const calls:
-            | vscode.CallHierarchyOutgoingCall[]
-            | vscode.CallHierarchyIncomingCall[] = await vscode.commands.executeCommand(command, node);
+        // visited[id] = true
 
         
+        const calls: vscode.CallHierarchyOutgoingCall[] | vscode.CallHierarchyIncomingCall[] 
+            = await vscode.commands.executeCommand(command, node);
+        
+        logIndent()
+        
+        log(`Call list obtained with ${calls.length} items`)
+        
         let localSequenceNumberIx: number = 0;
+        let callIx: number = 0;
             
-        await Promise.all(calls.map(async (call) => {
-            let next: CallHierarchyItem
-            let edge: CallHierarchy                        
+        for (const call of calls) {            
+
+            let whatsGoingOn = "";
+            let callFrom = "";
+            let callTo = "";
+            let callName = "";
+
+            // log(`Processing call ${++callIx} of ${calls.length}`);
+
+            whatsGoingOn += `Call ${++callIx}`
+
+            logIndent();
+
+            let next: CallHierarchyItem;
+            let edge: CallHierarchy;                 
             
             if (call instanceof vscode.CallHierarchyOutgoingCall) {
-                edge = { item: node, to: call.to }
-                next = call.to
-            } else {
-                edge = { item: node, from: call.from }
-                next = call.from
-            }
+                edge = { item: node, to: call.to };
+                next = call.to;
 
+                // log(`- Identified as an outgoing call from ${hiMethod(node.name)} to ${hiMethod(call.to.name)}`);
+                whatsGoingOn += ` from ${hiMethod(node.name)} to ${hiMethod(call.to.name)}`
+                callFrom = hiMethod(node.name)
+                callTo = hiMethod(call.to.name)
+            } else {
+                edge = { item: node, from: call.from };
+                next = call.from;
+
+                // log(`- Identified as an incoming call from ${hiMethod(call.from.name)} to ${hiMethod(node.name)}`);
+                whatsGoingOn += ` from ${hiMethod(call.from.name)} to ${hiMethod(node.name)}`;
+                callFrom = hiMethod(call.from.name)
+                callTo = hiMethod(node.name)
+            }            
 
             let skip = false
             for (const glob of ignoreGlobs) {
                 if (minimatch(next.uri.fsPath, glob)) {
-                    skip = true
-                    break
+                    skip = true;
+                    // log("Call involves ignored globals");
+                    whatsGoingOn += " involves ignored globals"
                 }
             }
+
             if (ignoreNonWorkspaceFiles) {
                 let isInWorkspace = false
                 for (const workspace of vscode.workspace.workspaceFolders ?? []) {
                     if (next.uri.fsPath.startsWith(workspace.uri.fsPath)) {
-                        isInWorkspace = true
-                        break
+                        isInWorkspace = true;
                     }
                 }
                 if (!isInWorkspace) {
-                    skip = true
+                    skip = true;
+                    //log("Call goes out of workspace");
+                    whatsGoingOn += " goes out of workspace"
                 }
             }
 
@@ -210,46 +288,76 @@ export async function getCallHierarchy(
                 let isInVenv = false
                 for (const path of builtinPackagesPaths ?? []) {
                     if (next.uri.fsPath.includes(path)) {
-                        isInVenv = true
-                        break
+                        isInVenv = true;
                     }
                 }
                 if (isInVenv) {
-                    skip = true
+                    skip = true;
+                    //log("Call goes to (v)env module");
+                    whatsGoingOn += " goes to (v)env module"
                 }
             }
 
             if (skip) {
-                return;
+                // log(`Call skipped`)
+                whatsGoingOn += " and is therefore skipped"
+
+                log(whatsGoingOn);
+                logOutdent();
+                continue;
             }
+
+            
 
             localSequenceNumberIx++;
             
+            const participantClassName = await findClassName(node.uri, node.selectionRange.start);
             const participantName = 
-                `${trimUri(node.uri)}/${findClassName(node.uri, node.selectionRange.start)}`;
-            
+                `${trimUri(node.uri)}/${participantClassName}`;                        
+
             const participantNameWithAlias = 
-                `${participantName} as ${trimUri(node.uri)}<br>${findClassName(node.uri, node.selectionRange.start)}`;
+                `${participantName} as ${trimUri(node.uri)}<br>${participantClassName}`;
 
             participants.add(participantNameWithAlias);
+
+            //log(`Identified participant ${hiObject(participantClassName)} with FQN [${participantName}]`);
             
+            let messageType: string = "";
+            let returnFrom: string = "";
+            let returnTo: string = "";
+
             // Assemble label based on call direction and nesting level
             if (call instanceof vscode.CallHierarchyOutgoingCall) {
                 
-                const otherParticipantName = `${trimUri(call.to.uri)}/${findClassName(call.to.uri, call.to.selectionRange.start)}`;
+                const otherParticipantClassName = await findClassName(call.to.uri, call.to.selectionRange.start);
+                const otherParticipantName = `${trimUri(call.to.uri)}/${otherParticipantClassName}`;
                 
-                messages.push(`    ${participantName} ->> ${otherParticipantName}: ${call.to.name}`);
-
                 edgeSequenceNumber = 
                     (parentSequenceNumber === "") 
                     ? `${localSequenceNumberIx.toString()}` 
                     : `${parentSequenceNumber}.${localSequenceNumberIx.toString()}`;
+                                
+                callFrom = `${hiObject(participantClassName)}.${callFrom}`
+                callTo = hiObject(otherParticipantClassName)
+                callName = hiMethod(call.to.name)
+
+                if (participantClassName === otherParticipantClassName) {
+                    messageType = "->>+";
+                    returnFrom = otherParticipantName;
+                    returnTo = participantName
+                } else {
+                    messageType = "->>"
+                }
+
+                messages.push(`    ${participantName} ${messageType} ${otherParticipantName}: ${edgeSequenceNumber}. ${call.to.name}`);
+
+                // log(`Recorded call ${edgeSequenceNumber}: ${hiObject(participantClassName)} ->> ${hiObject(otherParticipantClassName)}: ${hiMethod(call.to.name)}`);
+                
                 
             } else {
 
-                const otherParticipantName = `${trimUri(call.from.uri)}/${findClassName(call.from.uri, call.from.selectionRange.start)}`;
-
-                messages.push(`    ${otherParticipantName} ->> ${participantName}: ${node.name}`);
+                const otherParticipantClassName = await findClassName(call.from.uri, call.from.selectionRange.start);
+                const otherParticipantName = `${trimUri(call.from.uri)}/${otherParticipantClassName}`;                
 
                 edgeSequenceNumber = 
                     (parentSequenceNumber === "") 
@@ -257,18 +365,54 @@ export async function getCallHierarchy(
                     : parentSequenceNumber.startsWith('\u21A3') 
                         ? `${localSequenceNumberIx.toString()} ${parentSequenceNumber}`
                         : `${localSequenceNumberIx.toString()} \u21A3 ${parentSequenceNumber}`;
+
+                if (participantClassName === otherParticipantClassName) {
+                    messageType = "->>+";
+                    returnFrom = participantName;
+                    returnTo = otherParticipantName
+                } else {
+                    messageType = "->>"
+                }
+
+                callFrom = `${hiObject(otherParticipantClassName)}.${callFrom}`
+                callTo = hiObject(participantClassName)
+                callName = hiMethod(node.name)
+
+                messages.push(`    ${otherParticipantName} ${messageType} ${participantName}: ${edgeSequenceNumber}. ${node.name}`);
+
+                // log(`Recorded call ${edgeSequenceNumber}: ${hiObject(otherParticipantClassName)} ->> ${hiObject(participantClassName)}: ${hiMethod(node.name)}`);
+                
             }
+
+            log(`Call ${callIx} added as ${edgeSequenceNumber}: ${callFrom} ->> ${callTo}: ${callName}`); 
 
             edge.sequenceNumber = edgeSequenceNumber;
 
             addEdge(edge);
-            await traverse(next, edgeSequenceNumber);
-        }));
+
+            await traverse(next, edgeSequenceNumber, depth + 1);
+            
+            if (returnFrom !== "") {
+                messages.push(`    ${returnFrom} -->>- ${returnTo}: ${edgeSequenceNumber}. return`);
+                log(`${edgeSequenceNumber}: Returning from ${returnFrom} to ${returnTo}`);
+            }
+            
+
+            logOutdent();
+        };
+
+        logOutdent();
     }
 
-    await traverse(root, "")
-    saveDataToFile(participants, messages)
+    logResetIndentation();
+    logIndent();
+    log("Start building sequence diagram");
+    log('*'.repeat(80));
+
+    await traverse(root, "", 0)
     
+    logResetIndentation();
+
 }
 
 
@@ -317,7 +461,8 @@ async function saveDataToFile(participants: Set<string>, messages: string[]) {
 
     const uri = await vscode.window.showSaveDialog({
         filters: { 
-            'Mermaid Diagram files (*.mmd;*.mermaid)': ['*.mmd;', '*.mermaid'], 
+            //'Mermaid Diagram files (*.mmd;*.mermaid)': ['*.mmd', '*.mermaid'], 
+            'Mermaid Diagram files (*.mmd)': ['*.mmd'], 
             'All files (*.*)': ['*.*'],
         },
         defaultUri: defaultUri // Set the default save location
@@ -328,7 +473,11 @@ async function saveDataToFile(participants: Set<string>, messages: string[]) {
     } // User canceled the dialog
 
     await fs.promises.writeFile(uri.fsPath, combinedStr, 'utf8');
-    vscode.window.showInformationMessage('Data saved successfully!');
+    vscode.window.showInformationMessage('Diagram file saved successfully!');
+
+    const document = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(document);
+    await vscode.commands.executeCommand('mermaid-editor.preview', uri);    
 }
 
 function isEqual(a: CallHierarchyItem, b: CallHierarchyItem) {

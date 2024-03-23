@@ -34,10 +34,12 @@ export const buildWebview = (
         rootFile = entries[0].uri    
         rootFunction = entries[0].name
         
-        const { handler, html } = setupCallGraph(context, workspaceRoot, panel, {direction, entryPoints: entries})
+        getCallHierarchy("Outgoing", entries[0],  (edge: CallHierarchy) => {});
+        
+        // const { handler, html } = setupCallGraph(context, workspaceRoot, panel, {direction, entryPoints: entries})
 
-        panel.webview.onDidReceiveMessage(handler)
-        panel.webview.html = html
+        // panel.webview.onDidReceiveMessage(handler)
+        // panel.webview.html = html
     }
 }
 
@@ -162,7 +164,7 @@ export function setupCallGraph(
                         
                         if (params) {
 							Promise.all(params.entryPoints.map(async (entry) => {
-								await getCallHierarchy(params.direction, entry, "", addEdge)
+								await getCallHierarchy(params.direction, entry, addEdge)
 							}))
                         }
                         if (state) {
@@ -208,7 +210,7 @@ export function setupCallGraph(
                     throw new Error(msg)
                 }
 
-                await getCallHierarchy('Both', item[0], "", addEdge)
+                await getCallHierarchy('Both', item[0], addEdge)
 
             case 'savePNG':
                 const data = msg.data; // The PNG data URL
