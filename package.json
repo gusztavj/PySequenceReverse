@@ -1,9 +1,9 @@
 {
-    "name": "chartographer-extra",
-    "displayName": "Chartographer Extra",
-    "description": "Easily visualize function call hierarchy in a neat graph representation",
-    "version": "1.0.12",
-    "publisher": "ArpinFidel",
+    "name": "pysequencereverse",
+    "displayName": "Sequence Diagram Builder for Python",
+    "description": "Create sequence diagrams for Python methods",
+    "version": "1.0.0",
+    "publisher": "T1nk-R (gusztavj)",
     "engines": {
         "vscode": "^1.65.0"
     },
@@ -11,89 +11,43 @@
         "Visualization"
     ],
     "activationEvents": [
-        "onWebviewPanel:Chartographer-Extra.previewCallGraph"
+        "onWebviewPanel:PySequenceReverse.previewCallGraph"
     ],
     "main": "./out/extension.js",
     "contributes": {
         "commands": [
             {
-                "command": "Chartographer-Extra.showOutgoingCallGraph",
-                "title": "Chartographer Extra: Show outgoing call graph"
-            },
-            {
-                "command": "Chartographer-Extra.showIncomingCallGraph",
-                "title": "Chartographer Extra: Show incoming call graph"
-            },
-            {
-                "command": "Chartographer-Extra.showCallGraph",
-                "title": "Chartographer Extra: Show call graph"
-            },
-            {
-                "command": "Chartographer-Extra.addHierarchy",
-                "title": "Chartographer Extra: Add function to existing graph"
+                "command": "PySequenceReverse.createSequenceDiagram",
+                "title": "Sequence Diagram Builder for Python: Create diagram for this method"
             }
         ],
         "menus": {
             "editor/context": [
                 {
-                    "command": "Chartographer-Extra.showOutgoingCallGraph"
-                },
-                {
-                    "command": "Chartographer-Extra.showIncomingCallGraph"
-                },
-                {
-                    "command": "Chartographer-Extra.showCallGraph"
-                },
-                {
-                    "command": "Chartographer-Extra.addHierarchy"
+                    "command": "PySequenceReverse.createSequenceDiagram"
                 }
             ]
         },
         "configuration": {
-            "title": "chartographer-extra",
+            "title": "pysequencereverse",
             "properties": {
-                "chartographer-extra.ignoreOnGenerate": {
+                "pysequencereverse.ignoreOnGenerate": {
                     "description": "Glob patterns of files to ignore when fetching call hierarchy for the call graph",
                     "type": "array",
                     "items": {
                         "type": "string"
                     },
                     "default": []
-                },
-                "chartographer-extra.highlightRoots": {
-                    "description": "Color root nodes in the call graph",
-                    "type": "boolean",
-                    "default": true
-                },
-                "chartographer-extra.highlightLeaves": {
-                    "description": "Color leaf nodes in the call graph",
-                    "type": "boolean",
-                    "default": false
-                },
-                "chartographer-extra.ignoreNonWorkspaceFiles": {
+                },               
+                "pysequencereverse.ignoreNonWorkspaceFiles": {
                     "description": "Ignore files that are not part of the current workspace",
                     "type": "boolean",
                     "default": true
                 },
-                "chartographer-extra.ignoreAnalyzingThirdPartyPackages": {
+                "pysequencereverse.ignoreAnalyzingThirdPartyPackages": {
                     "description": "Don't analyze files/functions located in the physical or virtual environments (3rd party packages)",
                     "type": "boolean",
                     "default": true
-                },
-                "chartographer-extra.defaultGraphLayoutAlgorithm": {
-                    "description": "Default graph layout algorithm to use",
-                    "type": "string",
-                    "enum": [
-                        "klay",
-                        "elk",
-                        "dagre"
-                    ],
-                    "enumDescriptions": [
-                        "Klay",
-                        "ELK",
-                        "Dagre"
-                    ],
-                    "default": "dagre"
                 }
             }
         }
@@ -127,9 +81,12 @@
     },
     "homepage": "https://github.com/gusztavj/vscode-chartographer-improved/blob/master/README.md",
     "keywords": [
-        "graphviz",
+        "uml",
         "call graph",
-        "dot"
+        "sequence diagram",
+        "python",
+        "mermaid",
+        "reverse engineering"
     ],
     "dependencies": {
         "concat-map": "^0.0.2",

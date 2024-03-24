@@ -1,20 +1,194 @@
 import { CallHierarchyItem } from 'vscode'
 import * as vscode from 'vscode'
 import * as fs from 'fs';
-import { output } from './extension'
 import { minimatch } from 'minimatch'
-import EventEmitter = require('events')
-import * as chalk from 'chalk';
 
-export interface CallHierarchy {
-    item: CallHierarchyItem
-    from?: CallHierarchyItem
-    to?: CallHierarchyItem
+import {Logger} from './logging'
+import { CodeAnalyzer } from './code-analyzer';
 
-    sequenceNumber?: string
+
+
+// TextFormatter ##################################################################################################################
+/**
+ * A utility class for formatting text by wrapping it to fit within a specified line length.
+ */
+class TextFormatter {
+
+    /**
+     * Unless other length is specified, use this to wrap text to lines.
+     */
+    public static defaultLineLength = 30;
+
+    /**
+     * The soft limit specifies how much before or after the desired breakpoint shall the break
+     * be placed if the line cannot be broken at the desired position.
+     */
+    public static softWrappingLimit = 10;
+
+    /**
+     * Wraps text to fit within a specified line length, ensuring proper line breaks.
+     * @param text - The text to wrap.
+     * @param lengthAbout - The approximate line length to wrap the text.
+     * @returns The wrapped text with line breaks.
+     */
+    public static wrapText(text: string, lengthAbout: number = TextFormatter.defaultLineLength): string {
+        let ix = 0;
+        let wrappedText: string = "";
+        let endReached: boolean = false;
+        let chunkStartsAt: number = 0;
+        let chunkEndsAt: number = 0;
+        let lineBroken: boolean;    
+
+        if (text.length < lengthAbout + TextFormatter.softWrappingLimit) {
+            // No need to wrap anything
+            return text;
+        }
+
+        // Start wrapping into chunks
+        while (!endReached) {        
+            chunkEndsAt = chunkStartsAt + Math.min(chunkStartsAt + lengthAbout, text.length - chunkStartsAt);
+                    
+            if (!text.charAt(chunkEndsAt).match(/\s/)) { // The intended end of the line is not a whitespace 
+                
+                // Let's try to find one nearby. First define three small helper functions.                
+
+                lineBroken = false;
+                
+                // Tells whether the line can break at the current position and moves chunkEndsAt accordingly
+                const canBreakLineAtPosition = () => {
+                    lineBroken = chunkStartsAt + lengthAbout + ix === text.length - 1 || text.charAt(chunkStartsAt + lengthAbout + ix).match(/[\s\[\]\.,\:\(\)\{\})]/) !== null;
+
+                    if (lineBroken) {
+                        chunkEndsAt = chunkStartsAt + lengthAbout + ix;
+                    }
+                    
+                    return lineBroken;
+                }
+
+                // Tells whether the line can be broken nearby forward
+                const findNearbySpaceForward = (limit: number = TextFormatter.softWrappingLimit) => {
+                    ix = 0;
+                    while (++ix < limit && chunkStartsAt + lengthAbout + ix < text.length - 1 && !canBreakLineAtPosition()) {
+                        ;
+                    }
+                }
+
+                // Tells whether the line can be broken nearby backward
+                const findNearbySpaceBackward = () => {
+                    ix = 0;
+                    while (++ix < TextFormatter.softWrappingLimit && chunkStartsAt + lengthAbout + ix > 0 && !canBreakLineAtPosition()) {
+                        ;
+                    }
+                }
+
+                // And now find a suitable breaking point
+                // - First check if the text ends soon after the soft wrapping limit to not leave a very short last line
+                //   - If the text ends soon after the soft wrapping limit, first try to look for a nearby space backwards,
+                //     and only look forward if there is not any
+                //   - Otherwise first try to look for a nearby space forward and only go backwards if there's not any
+                
+
+                if (text.length - chunkEndsAt < TextFormatter.softWrappingLimit) { // Only a few character would remain if breaking here
+                    findNearbySpaceBackward();
+                    if (!lineBroken) {
+                        findNearbySpaceForward();
+                    }
+                } else { // There's more to wrap, we are not approaching the end of the text too much yet
+                    findNearbySpaceForward();
+                    if (!lineBroken) {
+                        findNearbySpaceBackward();
+                    }
+                }
+
+                if (!lineBroken) { // Could not wrap in the neighborhood
+                    // No other option but proceeding until we can break the line, if we can break it at all
+                    findNearbySpaceForward(text.length);
+                }
+
+            }
+            
+            endReached = chunkEndsAt === text.length - 1;
+
+            wrappedText += text.substring(chunkStartsAt, chunkEndsAt);
+
+            // Add the break if this is not the last chunk
+            if (!endReached) {
+                wrappedText += "<br>"
+            }
+            
+            // If no more than a line of text remains, add it to the last new line
+            if (chunkEndsAt + lengthAbout >= text.length) {
+                wrappedText += text.substring(chunkEndsAt)
+                endReached = true
+            } else {
+                // Move the window to the beginning of the unwrapped part
+                chunkStartsAt = chunkEndsAt + 1;
+            }
+        }
+
+        return wrappedText;
+    }
 }
 
-function findLongestCommonPrefix(paths: string[]): string {
+export const generateSequenceDiagram = (context: vscode.ExtensionContext) => {
+    return async () => {
+        const entries: vscode.CallHierarchyItem[] = await getSelectedFunctions()        
+        getCallHierarchy(entries[0]);
+    }
+}
+
+async function getSelectedFunctions() {
+	const activeTextEditor = vscode.window.activeTextEditor!
+	const entry: vscode.CallHierarchyItem[] = await vscode.commands.executeCommand(
+		'vscode.prepareCallHierarchy',
+		activeTextEditor.document.uri,
+		activeTextEditor.selection.active
+	)
+	if (!entry || !entry[0]) {
+		const msg = "Can't resolve entry function. Probably it's just a timeout, try again."
+		vscode.window.showErrorMessage(msg)
+		throw new Error(msg)
+	}
+
+	return entry
+}
+
+class SequenceDiagramModel {
+    public participants: Set<string> = new Set();    
+    public messages: string[] = [];
+}
+// getCallHierarchy ###############################################################################################################
+/**
+ * Generates a call hierarchy diagram, saves it to a file, and opens a preview if successful.
+ * @param root - The root CallHierarchyItem to start the diagram generation.
+ */
+export async function getCallHierarchy(root: CallHierarchyItem) 
+{ 
+
+    let participants: Set<string> = new Set();    
+    let messages: string[] = [];
+
+    // Build the call hierarchy and populate the participants and messages lists
+    let sdm = new SequenceDiagramModel();
+    sdm = await buildCallHierarchy(root);
+
+    // Save the diagram to a file from the built-up lists
+    const uri = await saveDataToFile(sdm)
+
+    // Try to open the diagram and the preview of the file was saved successfully
+    if (uri) {
+        await openDiagramWithPreview(uri)
+    }
+}
+
+
+// findLongestCommonPrefix ====================================================================================================
+/**
+ * Finds the longest common prefix among an array of strings.
+ * @param paths - An array of strings to find the common prefix from.
+ * @returns The longest common prefix among the strings.
+ */
+const findLongestCommonPrefix = (paths: string[]): string => {
     if (paths.length === 0) {
         return "";
     }
@@ -37,434 +211,553 @@ function findLongestCommonPrefix(paths: string[]): string {
     return prefix;
 }
 
-let workspaceRoot: string = '';
-
-function trimUri(uriOrString: string|vscode.Uri): string {
-    let uriString = typeof uriOrString === 'string' ? uriOrString : uriOrString.toString();
-    return uriString.replace(workspaceRoot, "");
-}
-
-function getFunctionName(uri: vscode.Uri): string {
-    return `${uri.toString().split('/').pop()}::` || "";
-}
-
-
-async function findClassName(uri: vscode.Uri, position: vscode.Position): Promise<string> {
-    // Load the document
-    const document = await vscode.workspace.openTextDocument(uri);
-    return parseToFindClassName(document.getText(), position) || "";
-}
-
-function parseToFindClassName(documentText: string, position: vscode.Position): string | undefined {
-    const lines = documentText.split('\n');
-    let currentIndentation = getIndentationLevel(lines[position.line]);
-
-    for (let i = position.line; i >= 0; i--) {
-        const line = lines[i];
-        const lineIndentation = getIndentationLevel(line);
-
-        // Check if the current line is less indented than the method's line and contains a class definition
-        if (lineIndentation < currentIndentation && line.trim().startsWith('class ')) {
-            // Extract the class name from the class definition
-            const classNameMatch = line.match(/class\s+([^\(:]+)/);
-            return classNameMatch ? classNameMatch[1].trim() : undefined;
-        }
-
-        // Update the current indentation level to the line's indentation if it's less indented than the current level
-        if (lineIndentation < currentIndentation && line.trim().length > 0) {
-            currentIndentation = lineIndentation;
-        }
-    }
-
-    // No class definition found
-    return undefined;
-}
-
-function getIndentationLevel(line: string): number {
-    // Count leading spaces to determine the indentation level
-    const match = line.match(/^(\s*)/);
-    return match ? match[1].length : 0;
-}
-
-export async function getCallHierarchy(
-        direction: 'Incoming' | 'Outgoing' | 'Both',
-        root: CallHierarchyItem,
-        addEdge: (edge: CallHierarchy) => void
-    ) 
-{ 
-
-    let participants: Set<string> = new Set();    
-    let messages: string[] = [];
-
-    await buildCallHierarchy(direction, root, "", addEdge, participants, messages);
-
-    await saveDataToFile(participants, messages)
-}
-
-let currentLogIndentationLevel = 0
-
-function log(message: string) {
-    //output.appendLine(`${'\t'.repeat(currentLogIndentationLevel)}${message}`);
-    console.log(`${' '.repeat(currentLogIndentationLevel * 2)}${message}`);
-}
-
-function logIndent() {
-    currentLogIndentationLevel++;
-}
-
-function logOutdent() {
-    if (currentLogIndentationLevel > 0) {
-        currentLogIndentationLevel--;
-    }
-}
-
-const COLOR_YELLOW = '\x1b[33m'; // ANSI code for yellow
-const COLOR_GREEN = '\x1b[32m'; // ANSI code for green
-const COLOR_DEFAULT = '\x1b[0m'; // ANSI code to reset color 
-
-function hiMethod(methodName: string) {
-    return (`${COLOR_YELLOW}${methodName}()${COLOR_DEFAULT}`);
-}
-
-function hiObject(objectName: string) {
-    return (`${COLOR_GREEN}${objectName}${COLOR_DEFAULT}`); 
-}
-
-function logResetIndentation() {
-    currentLogIndentationLevel = 0;
-}
-
+// buildCallHierarchy #############################################################################################################
+/**
+ * Builds the call hierarchy, analyzes outgoing calls, and composes messages for sequence diagrams.
+ * @param root - The root CallHierarchyItem to start the traversal.
+ * @param participants - The set to store the names of participants in the sequence diagram.
+ * @param messages - An array to store the composed messages for the sequence diagram.
+ */
 async function buildCallHierarchy(
-        direction: 'Incoming' | 'Outgoing' | 'Both',
-        root: CallHierarchyItem,
-        parentSequenceNumber: string,
-        addEdge: (edge: CallHierarchy) => void,
-        participants: Set<string>,
-        messages: string[] | undefined   
-    ) 
+        root: CallHierarchyItem,        
+    ): Promise<SequenceDiagramModel>
 {
-    if (direction === 'Both') {
-        await buildCallHierarchy('Incoming', root, parentSequenceNumber, addEdge, participants, messages)
-        await buildCallHierarchy('Outgoing', root, parentSequenceNumber, addEdge, participants, messages)
-        return
-    }
+    // Initialization -------------------------------------------------------------------------------------------------------------
 
+    const command = 'vscode.provideOutgoingCalls'
+    let participants: Set<string> = new Set<string>();
+    let messages: string[] = [];
+    let messageSequenceNumber: string;     
+    
     const roots = vscode.workspace.workspaceFolders?.map((f) => f.uri.toString()) ?? []
-    workspaceRoot = findLongestCommonPrefix(roots)
-
-    const configs = vscode.workspace.getConfiguration()
-    const ignoreGlobs = configs.get<string[]>('chartographer-extra.ignoreOnGenerate') ?? []
-    const ignoreNonWorkspaceFiles = configs.get<boolean>('chartographer-extra.ignoreNonWorkspaceFiles') ?? false
-
-    // Let the user choose to omit calls of functions in 3rd party and built-in packages
-    const ignoreAnalyzingThirdPartyPackages = configs.get<boolean>('chartographer-extra.ignoreAnalyzingThirdPartyPackages') ?? false
-
-    // ----------------------------------------------------------------------------------------------------------------------------
-    // Gather potential venv paths and other paths that may contain 3rd party packages 
-    // (to optionally exclude their calls from the graph)
-
-    // Two default paths offered by VS Code when creating a virtual environment
-    const dotVenv = ".venv";
-    const dotConda = ".conda";
-
-    // Start building paths to exclude by adding the default ones
-    let builtinPackagesPaths: string[] = [dotVenv, dotConda];
-
-    const pythonSettings = vscode.workspace.getConfiguration('python');    
+    let workspaceRoot = findLongestCommonPrefix(roots)
     
-    if (pythonSettings) {
-        
-        // Check if Python path is set and add it to the list of paths to exclude
-        const pyPath = pythonSettings.get('pythonPath');     
-        if (pyPath && typeof pyPath === 'string') {
-            builtinPackagesPaths.push(pyPath.toString())
+
+    // traverse *******************************************************************************************************************
+    /**
+     * Traverses the call hierarchy, analyzes outgoing calls, and composes messages for sequence diagrams.
+     * @param node - The CallHierarchyItem to traverse.
+     * @param myName - The name of the current node.
+     * @param parentSequenceNumber - The sequence number of the parent node.
+     * @param depth - The depth of the traversal.
+     * @returns A Promise that resolves to an array of strings representing the composed messages.
+     */
+    const traverse = async (
+        node: CallHierarchyItem, 
+        myName: string, 
+        parentSequenceNumber: string, 
+        depth: number): Promise<string[] | undefined> => 
+        {       
+            
+        // This function will
+        // * investigate what calls are located in the given node, and
+        // * create sequence diagram messages for these calls, furthermore
+        // * initiate the investigation of these calls (unless one needs to be skipped)
+        //
+        // This function uses recursion to go deep in the call hierarchy.
+        //
+        // First we define a small data structure and some local functions:
+        // * flattenCalls makes sure that each method call occurrences are processed
+        // * SkipCheckResult contains the result of investigations whether to skip a call or not as per user preferences.
+        // * shallCallBeSkipped() performs the aforementioned investigation
+        // * Participant contains name variations of participants of a sequence diagram
+        // * composeParticipantName determines aforementioned information for calls
+        // * analyzeCall processes a call to identify participants and compose the proper messages for the sequence diagram.
+        //
+
+        // flattenCalls ===========================================================================================================
+        /**
+         * Flattens and sorts the outgoing call hierarchy for a given node.
+         * @returns A Promise that resolves to an array of CallHierarchyOutgoingCall objects.
+         */
+        const flattenCalls = async (): Promise<vscode.CallHierarchyOutgoingCall[]> => {
+            // VS Code API gives a nice list of the outgoing calls from a function, however it has as many items as many
+            // different methods are called. If a method is called multiple times from another, instead of duplicating the call
+            // hierarchy item, the respective locations are maintained in the fromRanges property. While this is good for call
+            // hierarchy, it's not good for our purposes as we need to reconstruct the sequence of calls as they happen. 
+            //
+            // For example, is foo() is called twice, from line 7 and line 13 of something(), while bar is called once from 
+            // line 9, we need to reconstruct the sequence of foo(), bar(), foo().
+            
+            
+            // Get the calls from VS Code. Note that calls to the same method are grouped
+            const groupedCalls: vscode.CallHierarchyOutgoingCall[] = await vscode.commands.executeCommand(command, node);
+
+            let calls: vscode.CallHierarchyOutgoingCall[] = [];
+            
+            // Flatten out the list and make sure to have an item for all call locations as those may belong to different
+            // objects and may come sooner or later in the sequence of calls
+            groupedCalls.forEach(gc => {
+                gc.fromRanges.forEach(fr => {
+                    calls.push(new vscode.CallHierarchyOutgoingCall(gc.to, [fr]))
+                })
+            });
+
+            // Set up correct sequence of calls by sorting the calls based on location
+            calls.sort(
+                (a: vscode.CallHierarchyOutgoingCall, b: vscode.CallHierarchyOutgoingCall) =>
+                { 
+                    if (a.fromRanges[0].start.isBefore(b.fromRanges[0].start)) {
+                        return -1;
+                    }
+                    else if (a.fromRanges[0].start.isAfter(b.fromRanges[0].start)) {
+                        return 1;
+                    }
+                    else {
+                        return 0;
+                    }
+                }
+            );
+
+            return calls;
         }
 
-        // Check if 'Python: Venv folders' are specified, and add each to the list of paths to exclude
-        const venvFolders = pythonSettings.get<string[]>('venvFolders') ?? [];
-        for (const folder of venvFolders ?? []) {        
-            builtinPackagesPaths.push(folder)
-        }
+        // SkipCheckResult class ==================================================================================================
+        /**
+         * Represents the result of a skip check operation.
+         */
+        class SkipCheckResult {
+            public readonly skip: boolean = false;
+            public readonly reason: string = "";
 
-        // Check if 'Python: Venv Path' is defined and add it to the list of paths to exclude
-        const venvPath = pythonSettings.get('venvPath');     
-        if (venvPath && typeof venvPath === 'string') {
-            // Be prepared users may list multiple paths separated by comma or semicolon
-            for (const pathItem of venvPath.toString().split(/[;,]/)) {
-                builtinPackagesPaths.push(pathItem)
+            constructor(skip: boolean, reason: string) {
+                this.skip = skip;
+                this.reason = reason;
             }
+        }
+
+        // shallCallBeSkipped =====================================================================================================
+        /**
+         * Determines whether to skip analyzing a function call based on various criteria.
+         * @returns A boolean indicating whether to skip the analysis.
+         */
+        const shallCallBeSkipped = (
+            call: vscode.CallHierarchyOutgoingCall,
+            calledItem: CallHierarchyItem
+        ): SkipCheckResult => {
+
+            // Certain calls may be ignored, based on extension settings. Let's see if this needs to be ignored.
+
+            // Init stuff
+            let skip: boolean = false;
+            let reason: string = "";
+
+
+            // Obtain configuration data ------------------------------------------------------------------------------------------            
+
+            const roots = vscode.workspace.workspaceFolders?.map((f) => f.uri.toString()) ?? []        
+            const configs = vscode.workspace.getConfiguration()
+
+
+            // Check link/call type -----------------------------------------------------------------------------------------------
+
+            // Don't follow links which doesn't count function calls as per the call hierarchy provider's understandings
+            if (!(  call.to.kind === vscode.SymbolKind.Method
+                ||  call.to.kind === vscode.SymbolKind.Function
+                ||  call.to.kind === vscode.SymbolKind.Property
+            )) {
+                return new SkipCheckResult(true, "is not a function call");
+            }
+
+
+            // Check ignore globals option ----------------------------------------------------------------------------------------
             
-        }        
-    }
+            const ignoreGlobs = configs.get<string[]>('pysequencereverse.ignoreOnGenerate') ?? []
 
-    const command = direction === 'Outgoing' ? 'vscode.provideOutgoingCalls' : 'vscode.provideIncomingCalls'
-    const visited: { [key: string]: boolean } = {};
-    
-    let edgeSequenceNumber: string;     
-
-    const traverse = async (node: CallHierarchyItem, parentSequenceNumber: string, depth: number): Promise<string[] | undefined> => {        
-        
-        const id  = `"${node.uri}#${node.name}@${node.range.start.line}:${node.range.start.character}"`
-        
-        log(`Traversing ${hiMethod(node.name)}, PSEQ ${parentSequenceNumber}, FQN ${id}`)
-
-        // if (visited[id]) {
-        //     return;
-        // }
-
-        // visited[id] = true
-
-        
-        const calls: vscode.CallHierarchyOutgoingCall[] | vscode.CallHierarchyIncomingCall[] 
-            = await vscode.commands.executeCommand(command, node);
-        
-        logIndent()
-        
-        log(`Call list obtained with ${calls.length} items`)
-
-        
-        let localSequenceNumberIx: number = 0;
-        let callIx: number = 0;
-        let myMessages: string[] = [];
-            
-        for (const call of calls) {            
-
-            let beforeNestedCalls: string[] = [];
-            let afterNestedCalls: string[] = [];
-            let nestedCalls: string[] | undefined = [];
-                
-            let callerParticipantName = "";
-            let calledParticipantName = "";            
-            let message = "";            
-            let messageType: string = "";
-            let returnMessageType: string = "";
-
-            let whatsGoingOn = "";
-            let callFromToken = "";
-            let callToToken = "";
-            let callNameToken = "";
-
-            // log(`Processing call ${++callIx} of ${calls.length}`);
-
-            whatsGoingOn += `Call ${++callIx}`
-
-            logIndent();
-
-            let next: CallHierarchyItem;
-            let edge: CallHierarchy;                 
-            
-            if (call instanceof vscode.CallHierarchyOutgoingCall) {
-                edge = { item: node, to: call.to };
-                next = call.to;
-
-                // log(`- Identified as an outgoing call from ${hiMethod(node.name)} to ${hiMethod(call.to.name)}`);
-                whatsGoingOn += ` from ${hiMethod(node.name)} to ${hiMethod(call.to.name)}`
-                callFromToken = hiMethod(node.name)
-                callToToken = hiMethod(call.to.name)
-            } else {
-                edge = { item: node, from: call.from };
-                next = call.from;
-
-                // log(`- Identified as an incoming call from ${hiMethod(call.from.name)} to ${hiMethod(node.name)}`);
-                whatsGoingOn += ` from ${hiMethod(call.from.name)} to ${hiMethod(node.name)}`;
-                callFromToken = hiMethod(call.from.name)
-                callToToken = hiMethod(node.name)
-            }            
-
-            let skip = false
-            for (const glob of ignoreGlobs) {
-                if (minimatch(next.uri.fsPath, glob)) {
-                    skip = true;
-                    // log("Call involves ignored globals");
-                    whatsGoingOn += " involves ignored globals"
+            for (const glob of ignoreGlobs) { // Some globals are requested to be ignored from the diagram
+                if (minimatch(calledItem.uri.fsPath, glob)) {                    
+                    return new SkipCheckResult(true, "involves ignored globals");
                 }
             }
 
-            if (ignoreNonWorkspaceFiles) {
+
+            // Check ignore non-workspace files option ---------------------------------------------------------------------------
+            
+            const ignoreNonWorkspaceFiles = configs.get<boolean>('pysequencereverse.ignoreNonWorkspaceFiles') ?? false
+
+            if (ignoreNonWorkspaceFiles) { // Methods located in files out of the workspace folders shall be excluded
                 let isInWorkspace = false
                 for (const workspace of vscode.workspace.workspaceFolders ?? []) {
-                    if (next.uri.fsPath.startsWith(workspace.uri.fsPath)) {
+                    if (calledItem.uri.fsPath.startsWith(workspace.uri.fsPath)) {
                         isInWorkspace = true;
                     }
                 }
                 if (!isInWorkspace) {
-                    skip = true;
-                    //log("Call goes out of workspace");
-                    whatsGoingOn += " goes out of workspace"
+                    return new SkipCheckResult(true, "goes out of workspace");
                 }
             }
 
-            if (ignoreAnalyzingThirdPartyPackages) { // don't follow functions in files located under venv directories
 
+            // Check ignore (v)env folders option ---------------------------------------------------------------------------------            
+
+            // See if the the user chose to omit calls of functions in/to 3rd party and built-in packages
+            const ignoreAnalyzingThirdPartyPackages = configs.get<boolean>('pysequencereverse.ignoreAnalyzingThirdPartyPackages') ?? false
+
+            if (ignoreAnalyzingThirdPartyPackages) { // Requested to not follow functions located in files under (v)env directories
+
+                // Gather potential venv paths and other paths that may contain 3rd party packages 
+                // (to optionally exclude their calls from the graph)
+
+                // Two default paths offered by VS Code when creating a virtual environment
+                const dotVenv = ".venv";
+                const dotConda = ".conda";
+
+                // Start building paths to exclude by adding the default ones
+                let builtinPackagesPaths: string[] = [dotVenv, dotConda];
+
+                const pythonSettings = vscode.workspace.getConfiguration('python');    
+                
+                if (pythonSettings) {
+                    
+                    // Check if Python path is set and add it to the list of paths to exclude
+                    const pyPath = pythonSettings.get('pythonPath');     
+                    if (pyPath && typeof pyPath === 'string') {
+                        builtinPackagesPaths.push(pyPath.toString())
+                    }
+
+                    // Check if 'Python: Venv folders' are specified, and add each to the list of paths to exclude
+                    const venvFolders = pythonSettings.get<string[]>('venvFolders') ?? [];
+                    for (const folder of venvFolders ?? []) {        
+                        builtinPackagesPaths.push(folder)
+                    }
+
+                    // Check if 'Python: Venv Path' is defined and add it to the list of paths to exclude
+                    const venvPath = pythonSettings.get('venvPath');     
+                    if (venvPath && typeof venvPath === 'string') {
+                        // Be prepared users may list multiple paths separated by comma or semicolon
+                        for (const pathItem of venvPath.toString().split(/[;,]/)) {
+                            builtinPackagesPaths.push(pathItem)
+                        }
+                        
+                    }        
+                }
+
+                // With paths collected, see if the call's URI is on one of the paths or not
                 let isInVenv = false
                 for (const path of builtinPackagesPaths ?? []) {
-                    if (next.uri.fsPath.includes(path)) {
+                    if (calledItem.uri.fsPath.includes(path)) {
                         isInVenv = true;
                     }
                 }
                 if (isInVenv) {
-                    skip = true;
-                    //log("Call goes to (v)env module");
-                    whatsGoingOn += " goes to (v)env module"
+                    return new SkipCheckResult(true, "goes to (v)env module");
                 }
+            }            
+
+            return new SkipCheckResult(false, "");
+        }
+        
+        // Participant ============================================================================================================
+        /**
+         * Represents a participant in a sequence diagram with class and qualified names.
+         */
+        class Participant {
+            public className: string = "";
+            public qualifiedName: string = "";
+            public fullNameWithAlias: string = "";
+        }
+
+        // composeParticipantName =================================================================================================
+        /**
+         * Composes the name of the participant (class or module) based on the URI and position.
+         * @param uri - The URI of the document.
+         * @param position - The position within the document.
+         * @returns A Promise that resolves to a Participant object with the composed name.
+         */
+        const composeParticipantName = async (uri: vscode.Uri, position: vscode.Position): Promise<Participant> => {
+            const pn = new Participant();
+
+            // Find the name of the class containing the method from which to call originates
+            pn.className = await CodeAnalyzer.findClassName(uri, position);
+
+            if (pn.className.length === 0) { // Item is not in a class
+                // Go with the module name (the containing file's name without extension)
+                const moduleName: string | undefined = uri.path.split('/').pop()?.split('?')[0];
+                if (moduleName) {
+                    pn.className = moduleName;
+                }
+            }                                    
+
+            /**
+             * Trims the workspace root path from a given URI or string.
+             * @param uriOrString - The URI or string to trim.
+             * @returns The trimmed string.
+             */
+            const trimUri = (uriOrString: string | vscode.Uri): string => {
+                let uriString = typeof uriOrString === 'string' ? uriOrString : uriOrString.toString();
+                return uriString.replace(workspaceRoot, "");
             }
 
-            if (skip) {
-                // log(`Call skipped`)
-                whatsGoingOn += " and is therefore skipped"
 
-                log(whatsGoingOn);
-                logOutdent();
-                continue;
-            }
+            pn.qualifiedName = `${trimUri(uri)}/${pn.className}`;    
 
+            return pn;
+        }
+        
+        // analyzeCall ============================================================================================================
+        /**
+         * Analyzes an outgoing call in the call hierarchy, composes messages for sequence diagrams, and handles nested calls.
+         * @param call - The outgoing call to analyze.
+         * @param myMessages - The array to store the composed messages.
+         * @param callIx - The index of the call in the sequence.
+         */
+        const analyzeCall = async (
+            call: vscode.CallHierarchyOutgoingCall,
+            myMessages: string[],
+            callIx: number) => 
+            {
+
+            // To make sure activations on the sequence diagrams are correct, we'll add a return message for all calls.
+            // Further calls originating from the currently processed calls will be injected between these two.
+
+            let beforeNestedCalls: string[] = [];           // Collect diagram contents for the method call (message and optional notes)
+            let afterNestedCalls: string[] = [];            // Collect diagram contents for the return call
+            let nestedCalls: string[] | undefined = [];     // Contain the messages discovered when analyzing the called method
+            let calledItem: CallHierarchyItem;              // This is the call hierarchy item at which the call is targeted
+                
+            let message = "";                               // The message conveys. Contains the sequence number, the method name, and may contain params.
+            let messageType: string = "";                   // The type of message for the call according to Mermaid specifications
+            let returnMessageType: string = "";             // The type of message for the return call according to Mermaid specifications
             
+
+            // Compartments to compose comprehensive log items
+            let whatsGoingOn = "";
+            let callFromToken = "";
+            let callToToken = "";
+            let callNameToken = "";            
+
+
+            // Let's rock ---------------------------------------------------------------------------------------------------------
+
+            whatsGoingOn += `Call ${callIx}`
+
+            Logger.logIndent();
+                        
+            calledItem = call.to;                        
+            callFromToken = Logger.hiMethod(node.name)
+            callToToken = Logger.hiMethod(call.to.name)
+            whatsGoingOn += ` from ${callFromToken} to ${callToToken}`
+            
+
+            // Check if the call shall be skipped from further analysis -----------------------------------------------------------
+            
+            const scr: SkipCheckResult = shallCallBeSkipped(call, calledItem);
+            if (scr.skip) {
+                whatsGoingOn += ` ${scr.reason} and is therefore skipped`;
+
+                Logger.log(whatsGoingOn);
+                Logger.logOutdent();
+                return;
+            }
+
+
+            // Obtain information on the call -------------------------------------------------------------------------------------
+            
+            Logger.log(`Getting item info for ${calledItem.name} in ${calledItem.uri} at ${call.fromRanges[0].start.line}:${call.fromRanges[0].start.character}`)            
+            const callItemInfo = await CodeAnalyzer.getCallItemInfo(node.uri, call.fromRanges[0])
+            
+            // Increase the last tag of the sequence number as we are about to add a message at the same level
             localSequenceNumberIx++;
             
-            const participantClassName = await findClassName(node.uri, node.selectionRange.start);
-            const participantName = 
-                `${trimUri(node.uri)}/${participantClassName}`;                        
-
-            const participantNameWithAlias = 
-                `${participantName} as ${trimUri(node.uri)}<br>${participantClassName}`;
-
-            participants.add(participantNameWithAlias);
-
-            //log(`Identified participant ${hiObject(participantClassName)} with FQN [${participantName}]`);
             
+            // Compose names for the caller ---------------------------------------------------------------------------------------
 
-            // Assemble label based on call direction and nesting level
-            if (call instanceof vscode.CallHierarchyOutgoingCall) {
-                
-                const otherParticipantClassName = await findClassName(call.to.uri, call.to.selectionRange.start);
-                const otherParticipantName = `${trimUri(call.to.uri)}/${otherParticipantClassName}`;
-                
-                edgeSequenceNumber = 
-                    (parentSequenceNumber === "") 
-                    ? `${localSequenceNumberIx.toString()}` 
-                    : `${parentSequenceNumber}.${localSequenceNumberIx.toString()}`;
-                                
-                callerParticipantName = participantName;
-                calledParticipantName = otherParticipantName;
-                message = call.to.name;
+            // Find the name of the class and object from which the call originates and add it to the list of participants
+            const caller: Participant = await composeParticipantName(node.uri, node.selectionRange.start);
+            caller.fullNameWithAlias = `${caller.qualifiedName} as ${caller.qualifiedName}<br>:${myName}`;
 
-                if (participantClassName === otherParticipantClassName) {
-                    messageType = "->>+";
-                    returnMessageType = "-->>-";
-                } else {
-                    messageType = "->>+";
-                    returnMessageType = "-->>-";
-                }
+            // Add the callee object to the list of participants
+            participants.add(caller.fullNameWithAlias);
 
-                callFromToken = `${hiObject(participantClassName)}.${callFromToken}`
-                callToToken = hiObject(otherParticipantClassName)
-                callNameToken = hiMethod(call.to.name)
 
-            } else { // call instanceof vscode.CallHierarchyIncomingCall
+            // Compose names for the callee ---------------------------------------------------------------------------------------
+            
+            // Find the name of the class and object from which the call originates and add it to the list of participants
+            const callee: Participant = await composeParticipantName(call.to.uri, call.to.selectionRange.start);
 
-                const otherParticipantClassName = await findClassName(call.from.uri, call.from.selectionRange.start);
-                const otherParticipantName = `${trimUri(call.from.uri)}/${otherParticipantClassName}`;                
-
-                edgeSequenceNumber = 
-                    (parentSequenceNumber === "") 
-                    ? `\u21A3 ${localSequenceNumberIx.toString()}` 
-                    : parentSequenceNumber.startsWith('\u21A3') 
-                        ? `${localSequenceNumberIx.toString()} ${parentSequenceNumber}`
-                        : `${localSequenceNumberIx.toString()} \u21A3 ${parentSequenceNumber}`;
-
-                callerParticipantName = otherParticipantName;
-                calledParticipantName = participantName;
-                message = node.name;
-
-                if (participantClassName === otherParticipantClassName) {
-                    messageType = "->>+";
-                    returnMessageType = "-->>-";
-                } else {
-                    messageType = "->>"
-                    returnMessageType = "-->>";
-                }
-                
-                callFromToken = `${hiObject(otherParticipantClassName)}.${callFromToken}`
-                callToToken = hiObject(participantClassName)
-                callNameToken = hiMethod(node.name)
-
+            if (callItemInfo.objectName === "self" && depth > 1) { // Nested call to same object
+                // In some nested call a method calls another of the same class' same object, so don't use self as the object name
+                // as it would create another participant
+                callee.fullNameWithAlias = `${callee.qualifiedName} as ${callee.qualifiedName}<br>:${myName}`;
+            } else {
+                // Here another object is targeted so let's just use the variable or property name preceding the function name
+                callee.fullNameWithAlias = `${callee.qualifiedName} as ${callee.qualifiedName}<br>:${callItemInfo.objectName}`;
             }
 
-            beforeNestedCalls.push(`\t${callerParticipantName} ${messageType} ${calledParticipantName}: ${edgeSequenceNumber}. ${message}`);
-            afterNestedCalls.unshift(`\t${calledParticipantName} ${returnMessageType} ${callerParticipantName}: ${edgeSequenceNumber}. : return value`);
+            // Add the callee object to the list of participants
+            participants.add(callee.fullNameWithAlias);
 
-            log(`Call ${callIx} added as ${edgeSequenceNumber}: ${callFromToken} ->> ${callToToken}: ${callNameToken}`); 
+            
+            // Build up message compartments --------------------------------------------------------------------------------------            
 
-            edge.sequenceNumber = edgeSequenceNumber;
-            addEdge(edge);
+            messageSequenceNumber = 
+                (parentSequenceNumber === "") 
+                ? `${localSequenceNumberIx.toString()}` 
+                : `${parentSequenceNumber}.${localSequenceNumberIx.toString()}`;
+            
+            message = call.to.name;
 
-            nestedCalls = await traverse(next, edgeSequenceNumber, depth + 1);
+            if (caller.qualifiedName === callee.qualifiedName) {
+                messageType = "->>+";
+                returnMessageType = "-->>-";
+            } else {
+                messageType = "->>+";
+                returnMessageType = "-->>-";
+            }
+
+            // Compartments for log message
+            callFromToken = `${Logger.hiObject(caller.className)}.${callFromToken}`
+            callToToken = Logger.hiObject(callee.className)
+            callNameToken = Logger.hiMethod(call.to.name)            
+
+            // Add messages -------------------------------------------------------------------------------------------------------
+
+            // Outgoing call
+            beforeNestedCalls.push(
+                `\t${caller.qualifiedName} ${messageType} ${callee.qualifiedName}: ${messageSequenceNumber}. ${message}(${TextFormatter.wrapText(callItemInfo.parameters)})`);
+            
+            // Return call
+            afterNestedCalls.unshift(
+                `\t${callee.qualifiedName} ${returnMessageType} ${caller.qualifiedName}: ${messageSequenceNumber}. : return value`);
+
+            Logger.log(`Call ${callIx} added as ${messageSequenceNumber}: ${callFromToken} ->> ${callToToken}: ${callNameToken}`); 
+
+            // Process the callee -------------------------------------------------------------------------------------------------
+
+            nestedCalls = await traverse(calledItem, callItemInfo.objectName, messageSequenceNumber, depth + 1);
+
+            // Compose messages from compartments ---------------------------------------------------------------------------------
 
             let localMessages: string[] = [];
 
+            // Inject messages from nested calls between the outgoing call and the return call message(s)
             localMessages.push(...beforeNestedCalls);        
             localMessages.push(...nestedCalls ?? []);        
             localMessages.push(...afterNestedCalls);          
 
             myMessages?.push(...localMessages);
 
-            logOutdent();
-                        
-        };
+            Logger.logOutdent();
+        }
 
+        // Body (of traverse) =====================================================================================================
+    
+        // Obtain a unique ID
+        const id  = `"${node.uri}#${node.name}@${node.range.start.line}:${node.range.start.character}"`
         
-        logOutdent();
+        Logger.log(`Traversing ${Logger.hiMethod(node.name)}, PSEQ ${parentSequenceNumber}, FQN ${id}`)
+        
+        const calls: vscode.CallHierarchyOutgoingCall[] = await flattenCalls();
+
+        Logger.logIndent()        
+        Logger.log(`Call list obtained with ${calls.length} items`)
+
+        // Init the sequence numbering of this level. We'll combine this with the parent sequence number to get a decimal breakdown structure
+        let localSequenceNumberIx: number = 0;        
+
+        // Create a list to contain the messages for the sequence diagram originating from this method
+        let myMessages: string[] = [];
+        
+        let callIx: number = 0;
+
+        // Process each call in order of location to identify participants and create sequence diagram messages
+        for (const call of calls) {                                
+            await analyzeCall(call, myMessages, ++callIx);
+        };
+        
+        Logger.logOutdent();
 
         return myMessages;        
     }
 
-    logResetIndentation();
-    logIndent();
-    log("Start building sequence diagram");
-    log('*'.repeat(80));
+    // optimizeReferences *********************************************************************************************************
+    /**
+     * Optimizes references by finding the longest common prefix and updating participant and message names accordingly.
+     * @returns void
+     */
+    const optimizeReferences = () => {        
+        
+        // Body of saveDataToFile =====================================================================================================
 
-    messages?.push(...await traverse(root, "", 0) ?? [])
+        if (!messages || messages.length === 0) {
+            return;
+        }
+
+        // Find the common prefix that we can cut from fully qualified file names
+        let commonRoot = findLongestCommonPrefix(Array.from(participants));
+
+        // Remove the common part and make a copy of the participants list with pretty names
+        const prettyParticipants = new Set<string>();
+        participants.forEach(participant => {
+            let prettyName = participant.replace(commonRoot, "");
+            while (true) {
+                const evenPrettierName = prettyName.replace(commonRoot, "");
+                if (evenPrettierName === prettyName) {
+                    break;
+                }
+                prettyName = evenPrettierName;
+            } 
+
+            prettyParticipants.add(`    participant ${prettyName}`);
+        });
+
+        participants = prettyParticipants;
+        
+        // Remove the common part and make a copy of the messages list with pretty names
+        const prettyMessages: string[] = [""];
+        messages.forEach(message => {
+            let prettyName = message.replace(commonRoot, "");
+            while (true) {
+                const evenPrettierName = prettyName.replace(commonRoot, "");
+                if (evenPrettierName === prettyName) {
+                    break;
+                }
+                prettyName = evenPrettierName;
+            } 
+            
+            prettyMessages.push(prettyName);
+        });
+
+        messages = prettyMessages;
+    }
+
+    // Body of buildCallHierarchy *************************************************************************************************
+
+    Logger.logResetIndentation();
+    Logger.logIndent();
+    Logger.log("Start building sequence diagram");
+    Logger.log('*'.repeat(80));
+
+    // Start traversal and obtain sequence messages for the diagram
+    const sequenceMessages = await traverse(root, "self", "", 0)
+
+    // Add the obtained messages to the diagram, if there is any
+    messages?.push(...sequenceMessages ?? [])
     
-    logResetIndentation();
+    optimizeReferences();
 
+    let sdm = new SequenceDiagramModel()
+    sdm.participants = participants;
+    sdm.messages = messages;
+
+    Logger.logResetIndentation();            
+    
+    return sdm;
 }
 
 
 
-async function saveDataToFile(participants: Set<string>, messages: string[]) {
-
-    let commonRoot = findLongestCommonPrefix(Array.from(participants));
-
-    const prettyParticipants = new Set<string>();
-    participants.forEach(participant => {
-        let prettyName = participant.replace(commonRoot, "");
-        while (true) {
-            const evenPrettierName = prettyName.replace(commonRoot, "");
-            if (evenPrettierName === prettyName) {
-                break;
-            }
-            prettyName = evenPrettierName;
-        } 
-
-        prettyParticipants.add(`    participant ${prettyName}`);
-    });
+// saveDataToFile #################################################################################################################
+/**
+ * Saves participant and message data to a Mermaid diagram file and prompts the user to choose the save location.
+ * @param participants - The set of participants in the diagram.
+ * @param messages - The array of messages in the diagram.
+ * @returns A Promise that resolves to the URI of the saved file, or undefined if the operation was canceled.
+ */
+async function saveDataToFile(sequenceDiagramModel: SequenceDiagramModel): Promise<vscode.Uri | undefined> {
     
-    const prettyMessages: string[] = [""];
-    messages.forEach(message => {
-        let prettyName = message.replace(commonRoot, "");
-        while (true) {
-            const evenPrettierName = prettyName.replace(commonRoot, "");
-            if (evenPrettierName === prettyName) {
-                break;
-            }
-            prettyName = evenPrettierName;
-        } 
-        
-        prettyMessages.push(prettyName);
-    });
-
-    const participantsStr = Array.from(prettyParticipants).join('\n');
-    const messagesStr = prettyMessages.join('\n');
+    const participantsStr = Array.from(sequenceDiagramModel.participants).join('\n');
+    const messagesStr = sequenceDiagramModel.messages.join('\n');
     const combinedStr = `%%{init: {'theme':'forest'}}%%\nsequenceDiagram\n${participantsStr}\n\n${messagesStr}`;
 
     // Retrieve the current workspace root path
@@ -476,7 +769,7 @@ async function saveDataToFile(participants: Set<string>, messages: string[]) {
     const uri = await vscode.window.showSaveDialog({
         filters: { 
             //'Mermaid Diagram files (*.mmd;*.mermaid)': ['*.mmd', '*.mermaid'], 
-            'Mermaid Diagram files (*.mmd)': ['*.mmd'], 
+            'Mermaid Diagram files (*.mmd; *.mermaid)': ['mmd', 'mermaid'], 
             'All files (*.*)': ['*.*'],
         },
         defaultUri: defaultUri // Set the default save location
@@ -488,18 +781,22 @@ async function saveDataToFile(participants: Set<string>, messages: string[]) {
 
     await fs.promises.writeFile(uri.fsPath, combinedStr, 'utf8');
     vscode.window.showInformationMessage('Diagram file saved successfully!');
+    return uri;
+}
+
+
+// openDiagramWithPreview #########################################################################################################
+/**
+ * Opens a Mermaid diagram file with a preview in the editor.
+ * @param uri - The URI of the Mermaid diagram file to open.
+ * @returns void
+ */
+async function openDiagramWithPreview(uri: vscode.Uri) {
+    if (!uri) {
+        return;
+    }
 
     const document = await vscode.workspace.openTextDocument(uri);
     await vscode.window.showTextDocument(document);
     await vscode.commands.executeCommand('mermaid-editor.preview', uri);    
-}
-
-function isEqual(a: CallHierarchyItem, b: CallHierarchyItem) {
-    return (
-        a.name === b.name &&
-        a.kind === b.kind &&
-        a.uri.toString() === b.uri.toString() &&
-        a.range.start.line === b.range.start.line &&
-        a.range.start.character === b.range.start.character
-    )
 }
