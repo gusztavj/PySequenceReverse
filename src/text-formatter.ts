@@ -118,6 +118,18 @@ export class TextFormatter {
             }
         }
 
+        // Remove line continuation markers
+        wrappedText = wrappedText.replace(/\\/, " ")
+
+        // Remove empty lines (spaces between br tags) as they cause Mermaid syntax error,        
+        wrappedText = wrappedText.replace(/\s*<br>\s*<br>\s*/, "<br>");
+
+        // Remove superfluous leading and trailing whitespaces around <br> tags
+        wrappedText = wrappedText.replace(/\s*<br>\s*/, "<br>");
+
+        // Remove double spaces
+        wrappedText = wrappedText.replace(/\s\s+/, " ");
+
         return wrappedText;
     }
 }
