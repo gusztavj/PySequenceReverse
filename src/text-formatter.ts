@@ -24,13 +24,20 @@ export class TextFormatter {
      * @returns The wrapped text with line breaks.
      */
     public static wrapText(text: string, lengthAbout: number = TextFormatter.defaultLineLength): string {
-        let ix = 0;
+        
         let wrappedText: string = "";
         let endReached: boolean = false;
         let chunkStartsAt: number = 0;
         let chunkEndsAt: number = 0;
         let lineBroken: boolean;    
 
+        // Remove line continuation markers
+        text = text.replace(/\\/, " ")
+
+        // Remove double spaces
+        text = text.replace(/\s\s+/, " ");
+
+        // See if removing junk made it fit one line
         if (text.length < lengthAbout + TextFormatter.softWrappingLimit) {
             // No need to wrap anything
             return text;
@@ -38,20 +45,27 @@ export class TextFormatter {
 
         // Start wrapping into chunks
         while (!endReached) {        
-            chunkEndsAt = chunkStartsAt + Math.min(chunkStartsAt + lengthAbout, text.length - chunkStartsAt);
+            chunkEndsAt = chunkStartsAt + Math.min(lengthAbout + 1, text.length - chunkStartsAt);
                     
-            if (!text.charAt(chunkEndsAt).match(/\s/)) { // The intended end of the line is not a whitespace 
+            if (!text.charAt(chunkEndsAt).match(/[\s,]/)) { // The intended end of the line is not a whitespace 
                 
                 // Let's try to find one nearby. First define three small helper functions.                
 
                 lineBroken = false;
                 
                 // Tells whether the line can break at the current position and moves chunkEndsAt accordingly
-                const canBreakLineAtPosition = () => {
-                    lineBroken = chunkStartsAt + lengthAbout + ix === text.length - 1 || text.charAt(chunkStartsAt + lengthAbout + ix).match(/[\s\[\]\.,\:\(\)\{\})]/) !== null;
+                const canBreakLineAtPosition = (position: number) => {
+
+                    if (position < 0 || position >= text.length) {
+                        return false;
+                    }
+
+                    lineBroken = 
+                        position >= text.length - 1 
+                        || text.charAt(position).match(/[\s\[\.,\:\(\)\{]/) !== null;
 
                     if (lineBroken) {
-                        chunkEndsAt = chunkStartsAt + lengthAbout + ix;
+                        chunkEndsAt = position;
                     }
                     
                     return lineBroken;
@@ -59,16 +73,16 @@ export class TextFormatter {
 
                 // Tells whether the line can be broken nearby forward
                 const findNearbySpaceForward = (limit: number = TextFormatter.softWrappingLimit) => {
-                    ix = 0;
-                    while (++ix < limit && chunkStartsAt + lengthAbout + ix < text.length - 1 && !canBreakLineAtPosition()) {
+                    let ix = 0;
+                    while (++ix < limit && !canBreakLineAtPosition(chunkStartsAt + 1 + lengthAbout + ix)) {
                         ;
                     }
                 }
 
                 // Tells whether the line can be broken nearby backward
                 const findNearbySpaceBackward = () => {
-                    ix = 0;
-                    while (++ix < TextFormatter.softWrappingLimit && chunkStartsAt + lengthAbout + ix > 0 && !canBreakLineAtPosition()) {
+                    let ix = 0;
+                    while (--ix < TextFormatter.softWrappingLimit && !canBreakLineAtPosition(chunkStartsAt + 1 + lengthAbout + ix)) {
                         ;
                     }
                 }
@@ -80,7 +94,7 @@ export class TextFormatter {
                 //   - Otherwise first try to look for a nearby space forward and only go backwards if there's not any
                 
 
-                if (text.length - chunkEndsAt < TextFormatter.softWrappingLimit) { // Only a few character would remain if breaking here
+                if (text.length - chunkEndsAt < TextFormatter.softWrappingLimit * 1.5) { // Only a few character would remain if breaking here
                     findNearbySpaceBackward();
                     if (!lineBroken) {
                         findNearbySpaceForward();
@@ -92,16 +106,24 @@ export class TextFormatter {
                     }
                 }
 
+                // Could not wrap nicely, let's use force
                 if (!lineBroken) { // Could not wrap in the neighborhood
-                    // No other option but proceeding until we can break the line, if we can break it at all
-                    findNearbySpaceForward(text.length);
+                    
+                    // Try to break forward wherever we can, unless the remaining unwrapped text is short enough
+                    
+                    if (chunkStartsAt + lengthAbout + (TextFormatter.softWrappingLimit * 1.5) > text.length) { 
+                        // No other option but proceeding until we can break the line, if we can break it at all                    
+                        findNearbySpaceForward(text.length);
+                    } else {
+                        // It's not worth making it ugly, let's just have a longer last line
+                    }
                 }
 
             }
             
-            endReached = chunkEndsAt === text.length - 1;
+            endReached = chunkEndsAt >= text.length;
 
-            wrappedText += text.substring(chunkStartsAt, chunkEndsAt);
+            wrappedText += text.substring(chunkStartsAt, chunkEndsAt + 1).trim();
 
             // Add the break if this is not the last chunk
             if (!endReached) {
@@ -110,11 +132,11 @@ export class TextFormatter {
             
             // If no more than a line of text remains, add it to the last new line
             if (chunkEndsAt + lengthAbout >= text.length) {
-                wrappedText += text.substring(chunkEndsAt)
+                wrappedText += text.substring(chunkEndsAt + 1)
                 endReached = true
             } else {
                 // Move the window to the beginning of the unwrapped part
-                chunkStartsAt = chunkEndsAt + 1;
+                chunkStartsAt = chunkEndsAt;
             }
         }
 
