@@ -1,8 +1,14 @@
 import * as vscode from 'vscode'
-import { generateSequenceDiagram } from './call'
+import { Controller } from './controller'
 
 export const output = vscode.window.createOutputChannel('PySequenceReverse')
 
+// ################################################################################################################################
+/**
+ * Returns the default progress options for a notification progress bar.
+ * @param title - The title of the progress bar.
+ * @returns The default progress options object.
+ */
 const getDefaultProgressOptions = (title: string): vscode.ProgressOptions => {
     return {
         location: vscode.ProgressLocation.Notification,
@@ -11,14 +17,19 @@ const getDefaultProgressOptions = (title: string): vscode.ProgressOptions => {
     }
 }
 
+// ################################################################################################################################
+/**
+ * Activates the extension and registers a command to create a sequence diagram.
+ * @param context - The VS Code extension context.
+ */
 export function activate(context: vscode.ExtensionContext) {
 
     const commandDisposable = vscode.commands.registerCommand(
         'PySequenceReverse.createSequenceDiagram',
         async () => {
             vscode.window.withProgress(
-                getDefaultProgressOptions('Generate call graph'),
-                generateSequenceDiagram(context)
+                getDefaultProgressOptions('Generate sequence diagram'),
+                new Controller().generateSequenceDiagram(context)
             )
         }
     )
