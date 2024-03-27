@@ -27,11 +27,11 @@ Thanks for the valuable advices of [arpicheck](https://github.com/arpicheck).
 
 1. Click in or point to a function's name.
 1. Either
-   * Right-click and select `PySequenceReverse: Create diagram for this function`
+   * Right-click and select **PySequenceReverse: Create diagram for this function**
 
      or
 
-   * Hit `Ctrl+Shift+P` and start typing `**PySequenceReverse: Create diagram for this function**`, the hit it, too.
+   * Hit `Ctrl+Shift+P` and start typing `PySequenceReverse: Create diagram for this function`, the hit it, too.
 
 1. Wait for the diagram to be created and watch out for status messages.
 
@@ -39,7 +39,7 @@ If [automated saving](#save-diagram-automatically-rather-than-asking-for-a-file-
 
 ## Configuration Settings
 
-In VS Code, click `File > Preferences > Settings`, select `User` or `Workspace`, expand `Extensions` and select `PySequenceReverse` to view and edit settings:
+In VS Code, click **File > Preferences > Settings**, select **User** or **Workspace**, expand **Extensions** and select **PySequenceReverse** to view and edit settings:
 
 ### Glob patterns of files to ignore when fetching call hierarchy for the call graph
 
@@ -51,7 +51,7 @@ Limit code analysis to the current VS Code workspace. Calls targeting anything o
 
 ### Don't analyze files/functions located in the physical or virtual environments (3rd party packages)
 
-With this self-explanatory setting. This includes folders named `.venv` and `.conda`, as well as the Python path set in VS Code Settings, as well as the values set in the `Venv folders` and `Venv Path` settings of Python in VS Code Settings.
+With this self-explanatory setting. This includes folders named `.venv` and `.conda`, as well as the Python path set in VS Code Settings, as well as the values set in the **Venv folders** and **Venv Path** settings of Python in VS Code Settings.
 
 ### Save diagram automatically rather than asking for a file name
 
