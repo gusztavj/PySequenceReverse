@@ -3,10 +3,11 @@
     "displayName": "PySequenceReverse Sequence Diagram Builder for Python",
     "description": "Create Mermaid speaking sequence diagrams for Python functions",
     "version": "1.0.0",
-    "publisher": "T1nk-R-gusztavj",
+    "publisher": "t1nker",
     "engines": {
-        "vscode": "^1.65.0"
-    },    
+        "vscode": "^1.65.0",
+        "node": ">=14.0.0"
+    },
     "categories": [
         "Visualization"
     ],
@@ -14,11 +15,14 @@
         "tomoyukim.vscode-mermaid-editor"
     ],
     "main": "./out/extension.js",
+    "activationEvents": [
+        "onLanguage:python"
+    ],
     "contributes": {
         "commands": [
             {
                 "command": "PySequenceReverse.createSequenceDiagram",
-                "title": "Sequence Diagram Builder for Python: Create diagram for this function"
+                "title": "PySequenceReverse: Create diagram for this function"
             }
         ],
         "menus": {
@@ -30,7 +34,7 @@
         },
         "configuration": {
             "title": "PySequenceReverse",
-            "properties": {                
+            "properties": {
                 "py-sequence-reverse.ignoreOnGenerate": {
                     "description": "Glob patterns of files to ignore when fetching call hierarchy for the call graph",
                     "type": "array",
@@ -51,17 +55,17 @@
                 },
                 "py-sequence-reverse.saveAutomatically": {
                     "description": "Save diagram automatically rather than asking for a file name",
-                    "type": "boolean",                    
+                    "type": "boolean",
                     "default": false
                 },
                 "py-sequence-reverse.openAutomatically": {
                     "description": "Open saved diagram automatically (if supported previewer extension is installed)",
-                    "type": "boolean",                    
+                    "type": "boolean",
                     "default": true
                 },
                 "py-sequence-reverse.maxDepth": {
                     "description": "Maximum call depth (1 to 32)",
-                    "type": "integer",                    
+                    "type": "integer",
                     "default": 5,
                     "minimum": 1,
                     "maximum": 32
@@ -91,8 +95,8 @@
         "type": "git",
         "url": "https://github.com/gusztavj/PySequenceReverse.git"
     },
-    "license": "Apache",
-    "icon": "assets/icon.png",
+    "license": "MIT",
+    "icon": "art/big-logo.png",
     "bugs": {
         "url": "https://github.com/gusztavj/PySequenceReverse/issues"
     },
@@ -108,6 +112,7 @@
     "dependencies": {
         "concat-map": "^0.0.2",
         "minimatch": "^9.0.3",
-        "sanitize-filename": "^1.6.3"
+        "sanitize-filename": "^1.6.3",
+        "yarn": "^1.22.22"
     }
 }
