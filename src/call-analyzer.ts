@@ -47,6 +47,7 @@ export class CallAnalyzer {
     protected participants: Participants = new Participants();
     protected messages: string[] = [];
     protected messageSequenceNumber: string = "";
+    protected maxCallDepth!: number;
 
     // ****************************************************************************************************************************
     /**
@@ -95,6 +96,8 @@ export class CallAnalyzer {
         Logger.log("Start building sequence diagram");
         Logger.log('*'.repeat(80));
 
+
+        this.maxCallDepth = vscode.workspace.getConfiguration().get<number>('py-sequence-reverse.maxDepth') ?? 32
         // Start traversal and obtain sequence messages for the diagram
         const sequenceMessages = await this.traverse(sequenceDiagramModel.functionAnalyzed(), "self", "", 0)
 
@@ -343,9 +346,16 @@ export class CallAnalyzer {
 
             Logger.log(`Call ${callIx} added as ${this.messageSequenceNumber}: ${callFromToken} ->> ${callToToken}: ${callNameToken}`); 
 
-            // Process the callee -------------------------------------------------------------------------------------------------
+            // Process the callee unless depth limit is reached -------------------------------------------------------------------
 
-            nestedCalls = await this.traverse(calledItem, callItemInfo.objectName, this.messageSequenceNumber, depth + 1);
+            if (depth < this.maxCallDepth) {
+                nestedCalls = await this.traverse(calledItem, callItemInfo.objectName, this.messageSequenceNumber, depth + 1);
+                if (nestedCalls === undefined) {
+                    beforeNestedCalls.push(
+                        `\tNote right of ${callee.id}: Further calls ignored for reaching max depth`
+                    )
+                }
+            } 
 
             // Compose messages from compartments ---------------------------------------------------------------------------------
 
@@ -369,6 +379,11 @@ export class CallAnalyzer {
         Logger.log(`Traversing ${Logger.hiMethod(node.name)}, PSEQ ${parentSequenceNumber}, FQN ${id}`)
         
         const calls: vscode.CallHierarchyOutgoingCall[] = await flattenCalls();
+
+        if (calls.length > 0 && depth === this.maxCallDepth) {
+            // Max depth reached, don't process these calls
+            return undefined
+        }
 
         Logger.logIndent()        
         Logger.log(`Call list obtained with ${calls.length} items`)
@@ -464,7 +479,7 @@ export class CallAnalyzer {
 
         // Check ignore globals option ----------------------------------------------------------------------------------------
         
-        const ignoreGlobs = configs.get<string[]>('pysequencereverse.ignoreOnGenerate') ?? []
+        const ignoreGlobs = configs.get<string[]>('py-sequence-reverse.ignoreOnGenerate') ?? []
 
         for (const glob of ignoreGlobs) { // Some globals are requested to be ignored from the diagram
             if (minimatch(calledItem.uri.fsPath, glob)) {                    
@@ -475,7 +490,7 @@ export class CallAnalyzer {
 
         // Check ignore non-workspace files option ---------------------------------------------------------------------------
         
-        const ignoreNonWorkspaceFiles = configs.get<boolean>('pysequencereverse.ignoreNonWorkspaceFiles') ?? false
+        const ignoreNonWorkspaceFiles = configs.get<boolean>('py-sequence-reverse.ignoreNonWorkspaceFiles') ?? false
 
         if (ignoreNonWorkspaceFiles) { // Methods located in files out of the workspace folders shall be excluded
             let isInWorkspace = false
@@ -493,7 +508,7 @@ export class CallAnalyzer {
         // Check ignore (v)env folders option ---------------------------------------------------------------------------------            
 
         // See if the the user chose to omit calls of functions in/to 3rd party and built-in packages
-        const ignoreAnalyzingThirdPartyPackages = configs.get<boolean>('pysequencereverse.ignoreAnalyzingThirdPartyPackages') ?? false
+        const ignoreAnalyzingThirdPartyPackages = configs.get<boolean>('py-sequence-reverse.ignoreAnalyzingThirdPartyPackages') ?? false
 
         if (ignoreAnalyzingThirdPartyPackages) { // Requested to not follow functions located in files under (v)env directories
 

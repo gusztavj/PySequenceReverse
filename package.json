@@ -1,17 +1,17 @@
 {
-    "name": "pysequencereverse",
-    "displayName": "Sequence Diagram Builder for Python",
-    "description": "Create sequence diagrams for Python methods",
+    "name": "py-sequence-reverse",
+    "displayName": "PySequenceReverse Sequence Diagram Builder for Python",
+    "description": "Create Mermaid speaking sequence diagrams for Python functions",
     "version": "1.0.0",
-    "publisher": "T1nk-R (gusztavj)",
+    "publisher": "T1nk-R-gusztavj",
     "engines": {
         "vscode": "^1.65.0"
-    },
+    },    
     "categories": [
         "Visualization"
     ],
-    "activationEvents": [
-        "onWebviewPanel:PySequenceReverse.previewCallGraph"
+    "extensionDependencies": [
+        "tomoyukim.vscode-mermaid-editor"
     ],
     "main": "./out/extension.js",
     "contributes": {
@@ -29,19 +29,9 @@
             ]
         },
         "configuration": {
-            "title": "pysequencereverse",
-            "properties": {
-                "pysequencereverse.saveAutomatically": {
-                    "description": "Save diagram automatically rather than asking for a file name",
-                    "type": "boolean",                    
-                    "default": false
-                },
-                "pysequencereverse.openAutomatically": {
-                    "description": "Open saved diagram automatically (if supported previewer extension is installed)",
-                    "type": "boolean",                    
-                    "default": true
-                },
-                "pysequencereverse.ignoreOnGenerate": {
+            "title": "PySequenceReverse",
+            "properties": {                
+                "py-sequence-reverse.ignoreOnGenerate": {
                     "description": "Glob patterns of files to ignore when fetching call hierarchy for the call graph",
                     "type": "array",
                     "items": {
@@ -49,15 +39,32 @@
                     },
                     "default": []
                 },
-                "pysequencereverse.ignoreNonWorkspaceFiles": {
+                "py-sequence-reverse.ignoreNonWorkspaceFiles": {
                     "description": "Ignore files that are not part of the current workspace",
                     "type": "boolean",
                     "default": true
                 },
-                "pysequencereverse.ignoreAnalyzingThirdPartyPackages": {
+                "py-sequence-reverse.ignoreAnalyzingThirdPartyPackages": {
                     "description": "Don't analyze files/functions located in the physical or virtual environments (3rd party packages)",
                     "type": "boolean",
                     "default": true
+                },
+                "py-sequence-reverse.saveAutomatically": {
+                    "description": "Save diagram automatically rather than asking for a file name",
+                    "type": "boolean",                    
+                    "default": false
+                },
+                "py-sequence-reverse.openAutomatically": {
+                    "description": "Open saved diagram automatically (if supported previewer extension is installed)",
+                    "type": "boolean",                    
+                    "default": true
+                },
+                "py-sequence-reverse.maxDepth": {
+                    "description": "Maximum call depth (1 to 32)",
+                    "type": "integer",                    
+                    "default": 5,
+                    "minimum": 1,
+                    "maximum": 32
                 }
             }
         }
@@ -82,14 +89,14 @@
     },
     "repository": {
         "type": "git",
-        "url": "https://github.com/gusztavj/vscode-chartographer-improved.git"
+        "url": "https://github.com/gusztavj/PySequenceReverse.git"
     },
     "license": "Apache",
     "icon": "assets/icon.png",
     "bugs": {
-        "url": "https://github.com/gusztavj/vscode-chartographer-improved/issues"
+        "url": "https://github.com/gusztavj/PySequenceReverse/issues"
     },
-    "homepage": "https://github.com/gusztavj/vscode-chartographer-improved/blob/master/README.md",
+    "homepage": "https://github.com/gusztavj/PySequenceReverse/blob/master/README.md",
     "keywords": [
         "uml",
         "call graph",
