@@ -4,6 +4,7 @@ import * as vscode from 'vscode'
 import { SequenceDiagramModel } from './entities';
 import { CallAnalyzer } from './call-analyzer';
 import { DocumentManager } from './document-manager';
+import { CodeAnalyzer } from './code-analyzer';
 
 // ################################################################################################################################
 /**
@@ -20,7 +21,7 @@ export class Controller {
      */
     public generateSequenceDiagram = (context: vscode.ExtensionContext) => {
         return async () => {
-            const entries: vscode.CallHierarchyItem[] = await DocumentManager.getSelectedFunctions()                    
+            const entries: vscode.CallHierarchyItem[] = await CodeAnalyzer.getSelectedFunctions()                    
             await this.createSequenceDiagram(entries[0]);
         }
     }
@@ -33,18 +34,49 @@ export class Controller {
     public async createSequenceDiagram(root: CallHierarchyItem) { 
     
         // Build the call hierarchy and populate the participants and messages lists
-        let sdm = new SequenceDiagramModel();
-        sdm = await new CallAnalyzer().sequenceCalls(root);
+        let sdm = new SequenceDiagramModel(root);
+        sdm = await new CallAnalyzer().sequenceCalls(sdm);
 
+        // Have the diagram text composed
+        await sdm.composeDiagram();
+
+        // Obtain configuration data ------------------------------------------------------------------------------------------                        
+        const configs = vscode.workspace.getConfiguration()
+
+        const saveAutomatically = configs.get<string[]>('pysequencereverse.saveAutomatically') ?? false;
+        const openAutomatically = configs.get<string[]>('pysequencereverse.openAutomatically') ?? true;        
+
+        // Create a document manager and file URI
         const docMgr = new DocumentManager();
-    
-        // Save the diagram to a file from the built-up lists
-        const uri = await docMgr.saveDataToFile(sdm)
-    
-        // Try to open the diagram and the preview of the file was saved successfully
-        if (uri) {
-            await docMgr.openDiagramWithPreview(uri)
+        let fileUri: vscode.Uri | undefined;
+
+        if (saveAutomatically) {
+            fileUri = docMgr.createDefaultFilename(sdm);
+        } else {
+            // Ask the user for the file name
+            fileUri = await docMgr.askForFilename(sdm);            
         }
+
+
+        // See if the user wants to save the file or we could create a file name
+        if (fileUri) { // The user selected a file name or we could create the file name
+
+            // Save the diagram to a file from the built-up lists 
+            let savedSuccessfully: boolean = await docMgr.saveDiagram(fileUri.fsPath, sdm.contents())
+            
+            if (savedSuccessfully && openAutomatically) {
+                // Open the preview
+                await docMgr.openDiagramWithPreview(fileUri);
+
+                if (saveAutomatically) {
+                    await docMgr.saveDiagramAsImage(fileUri);
+                    await docMgr.closeDiagram();
+                }
+            }
+
+            
+        }
+
     }   
 
     

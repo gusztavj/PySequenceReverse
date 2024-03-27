@@ -18,7 +18,7 @@
         "commands": [
             {
                 "command": "PySequenceReverse.createSequenceDiagram",
-                "title": "Sequence Diagram Builder for Python: Create diagram for this method"
+                "title": "Sequence Diagram Builder for Python: Create diagram for this function"
             }
         ],
         "menus": {
@@ -31,6 +31,16 @@
         "configuration": {
             "title": "pysequencereverse",
             "properties": {
+                "pysequencereverse.saveAutomatically": {
+                    "description": "Save diagram automatically rather than asking for a file name",
+                    "type": "boolean",                    
+                    "default": false
+                },
+                "pysequencereverse.openAutomatically": {
+                    "description": "Open saved diagram automatically (if supported previewer extension is installed)",
+                    "type": "boolean",                    
+                    "default": true
+                },
                 "pysequencereverse.ignoreOnGenerate": {
                     "description": "Glob patterns of files to ignore when fetching call hierarchy for the call graph",
                     "type": "array",
@@ -38,7 +48,7 @@
                         "type": "string"
                     },
                     "default": []
-                },               
+                },
                 "pysequencereverse.ignoreNonWorkspaceFiles": {
                     "description": "Ignore files that are not part of the current workspace",
                     "type": "boolean",
@@ -90,6 +100,7 @@
     ],
     "dependencies": {
         "concat-map": "^0.0.2",
-        "minimatch": "^9.0.3"
+        "minimatch": "^9.0.3",
+        "sanitize-filename": "^1.6.3"
     }
 }

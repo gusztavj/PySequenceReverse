@@ -1,10 +1,18 @@
 import * as vscode from 'vscode'
 import * as fs from 'fs';
+import * as path from 'path';
+import sanitize = require('sanitize-filename');
 
 import { SequenceDiagramModel } from './entities';
+import { CallAnalyzer } from './call-analyzer';
+import { CodeAnalyzer } from './code-analyzer';
 
 // ################################################################################################################################
 export class DocumentManager {
+
+
+    private _document!: vscode.TextDocument;
+    public document(): vscode.TextDocument { return this._document; }
 
     // ****************************************************************************************************************************
     /**
@@ -35,25 +43,45 @@ export class DocumentManager {
         return prefix;
     }
 
+
     // ****************************************************************************************************************************
     /**
-     * Saves participant and message data to a Mermaid diagram file and prompts the user to choose the save location.
-     * @param participants - The set of participants in the diagram.
-     * @param messages - The array of messages in the diagram.
-     * @returns A Promise that resolves to the URI of the saved file, or undefined if the operation was canceled.
+     * Creates a default filename for saving the sequence diagram based on the provided model.
+     * 
+     * @param {SequenceDiagramModel} sequenceDiagram - The sequence diagram model used to generate the default filename.
+     * @returns {vscode.Uri} The default URI for saving the diagram.
      */
-    public async saveDataToFile(sequenceDiagramModel: SequenceDiagramModel): Promise<vscode.Uri | undefined> {
+    public createDefaultFilename(sequenceDiagram: SequenceDiagramModel): vscode.Uri {
         
-        const participantsStr = Array.from(sequenceDiagramModel.participants).join('\n');
-        const messagesStr = sequenceDiagramModel.messages.join('\n');
-        const combinedStr = `%%{init: {'theme':'forest'}}%%\nsequenceDiagram\n${participantsStr}\n\n${messagesStr}`;
-
         // Retrieve the current workspace root path
-        const {workspaceFolders} = vscode.workspace;
+        const {workspaceFolders} = vscode.workspace;        
+
         const defaultUri = workspaceFolders && workspaceFolders.length > 0 
             ? vscode.Uri.file(workspaceFolders[0].uri.fsPath) // Use the first workspace folder as default
             : undefined;
 
+        // Construct default file name
+        // sourcery skip: inline-immediately-returned-variable
+        const defaultFileName = 
+            vscode.Uri.file(
+                path.join(defaultUri?.fsPath || "", sanitize(sequenceDiagram.title(), {replacement: "-"})) + ".mmd")
+        
+        return defaultFileName;
+    }
+
+    // ****************************************************************************************************************************
+    /**
+     * Asks the user to provide a filename for saving the sequence diagram.
+     * 
+     * @param {SequenceDiagramModel} sequenceDiagram - The sequence diagram model to save.
+     * @returns {Promise<vscode.Uri | undefined>} A Promise that resolves with the selected URI or undefined.
+     */
+    public async askForFilename(sequenceDiagram: SequenceDiagramModel): Promise<vscode.Uri | undefined> {
+        
+        // Construct default file name
+        const defaultFileName = this.createDefaultFilename(sequenceDiagram);
+
+        // sourcery skip: inline-immediately-returned-variable
         const uri = await vscode.window.showSaveDialog({
             filters: { 
                 // eslint-disable-next-line @typescript-eslint/naming-convention
@@ -61,16 +89,34 @@ export class DocumentManager {
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'All files (*.*)': ['*.*'],
             },
-            defaultUri: defaultUri // Set the default save location
+            defaultUri: defaultFileName // Set the default save location
         });
 
-        if (!uri) {
-            return;
-        } // User canceled the dialog
-
-        await fs.promises.writeFile(uri.fsPath, combinedStr, 'utf8');
-        vscode.window.showInformationMessage('Diagram file saved successfully!');
         return uri;
+    }
+    
+    // ****************************************************************************************************************************
+    /**
+     * Saves the diagram contents to a file with the provided filename.
+     * 
+     * @param {string} filename - The name of the file to save the diagram contents to.
+     * @param {string} contents - The contents of the diagram to be saved.
+     * @returns {Promise<void>} A Promise that resolves when the diagram is saved successfully.
+     */
+    public async saveDiagram(filename: string, contents: string): Promise<boolean> {
+
+        let success: boolean = false;
+
+        try {
+            await fs.promises.writeFile(filename, contents, 'utf8');
+            vscode.window.showInformationMessage('Diagram file saved successfully!');    
+            success = true;
+        } catch (error) {
+            vscode.window.showErrorMessage(`Diagram could not be saved for an error of ${error}`)
+            success = false;
+        }
+        
+        return success;
     }
 
 
@@ -85,30 +131,50 @@ export class DocumentManager {
             return;
         }
 
-        const document = await vscode.workspace.openTextDocument(uri);
-        await vscode.window.showTextDocument(document);
-        await vscode.commands.executeCommand('mermaid-editor.preview', uri);    
+        this._document = await vscode.workspace.openTextDocument(uri);
+
+        if (this._document) {
+            await vscode.window.showTextDocument(this.document());
+            await vscode.commands.executeCommand('mermaid-editor.preview', uri);    
+        }
     }
 
     // ****************************************************************************************************************************
     /**
-     * Retrieves the selected functions for call hierarchy analysis.
-     * @returns A Promise that resolves to an array of CallHierarchyItem representing the selected functions.
+     * Saves the diagram as an image based on the provided URI.
+     * 
+     * If the document is not already open, it opens the document before generating and saving the image.
+     * 
+     * @param {vscode.Uri} uri - The URI of the diagram to save as an image.
      */
-    public static async getSelectedFunctions() {
-        const activeTextEditor = vscode.window.activeTextEditor!
-        const entry: vscode.CallHierarchyItem[] = await vscode.commands.executeCommand(
-            'vscode.prepareCallHierarchy',
-            activeTextEditor.document.uri,
-            activeTextEditor.selection.active
-        )
-        if (!entry || !entry[0]) {
-            const msg = "Can't resolve entry function. Probably it's just a timeout, try again."
-            vscode.window.showErrorMessage(msg)
-            throw new Error(msg)
+    public async saveDiagramAsImage(uri: vscode.Uri) {
+        if (!uri) {
+            return;
         }
-    
-        return entry
+
+        // Make sure the doc is open (the user could have closed it)
+        if (!this.document()) {
+            this._document = await vscode.workspace.openTextDocument(uri);            
+        }
+
+        await vscode.window.showTextDocument(this.document());
+        await vscode.commands.executeCommand('mermaid-editor.generate.file');    
+        vscode.window.showInformationMessage('Diagram image saved successfully!');
     }
-    
+
+    // ****************************************************************************************************************************
+    /**
+     * Closes the current diagram document.
+     * 
+     * This method opens the document if it exists and then closes the active editor.
+     */
+    public async closeDiagram() {
+        
+        if (!this.document()) {
+            return;
+        }
+        
+        await vscode.window.showTextDocument(this.document());
+        await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+    }
 }

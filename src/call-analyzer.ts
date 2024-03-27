@@ -4,7 +4,7 @@ import { minimatch } from 'minimatch'
 
 import { Logger } from './logging'
 import { CodeAnalyzer } from './code-analyzer';
-import { SequenceDiagramModel, Participant, CallItemInfo } from './entities';
+import { SequenceDiagramModel, Participant, CallItemInfo, Participants } from './entities';
 import { DocumentManager } from './document-manager';
 import { TextFormatter } from './text-formatter';
 
@@ -44,7 +44,7 @@ class SkipCheckResult {
 export class CallAnalyzer {
 
     // Properties *****************************************************************************************************************
-    protected participants: Set<string> = new Set<string>();
+    protected participants: Participants = new Participants();
     protected messages: string[] = [];
     protected messageSequenceNumber: string = "";
 
@@ -62,36 +62,53 @@ export class CallAnalyzer {
      * Retrieves the common root path of the workspace folders.
      * @returns A string representing the common root path of the workspace folders.
      */
-    protected static workspaceRoot(): string {
+    public static workspaceRoot(): string {
         return DocumentManager.findLongestCommonPrefix(CallAnalyzer.roots())
     }
+
+    /**
+     * Stores the result of the `getCommonRoot` operation for later retrieval.
+     */
+    public static commonRoot: string = "";
+
+    /**
+     * Finds the common root path among a list of paths.
+     * 
+     * @param {string[]} listOfPaths - An array of paths to find the common root from.
+     * @returns {string} The common root path among the provided paths.
+     */
+    public static getCommonRoot(listOfPaths: string[]): string {
+        CallAnalyzer.commonRoot = DocumentManager.findLongestCommonPrefix(listOfPaths)
+        return CallAnalyzer.commonRoot;
+    }
+
+
 
     // ****************************************************************************************************************************
     /**
      * Builds the call hierarchy, analyzes outgoing calls, and composes messages for sequence diagrams.
      * @param root - The root CallHierarchyItem to start the traversal.
      */
-    public async sequenceCalls(root: CallHierarchyItem): Promise<SequenceDiagramModel> {
+    public async sequenceCalls(sequenceDiagramModel: SequenceDiagramModel): Promise<SequenceDiagramModel> {
         Logger.logResetIndentation();
         Logger.logIndent();
         Logger.log("Start building sequence diagram");
         Logger.log('*'.repeat(80));
 
         // Start traversal and obtain sequence messages for the diagram
-        const sequenceMessages = await this.traverse(root, "self", "", 0)
+        const sequenceMessages = await this.traverse(sequenceDiagramModel.functionAnalyzed(), "self", "", 0)
 
         // Add the obtained messages to the diagram, if there is any
         this.messages?.push(...sequenceMessages ?? [])
         
         this.optimizeReferences();
 
-        let sdm = new SequenceDiagramModel()
-        sdm.participants = this.participants;
-        sdm.messages = this.messages;
+        sequenceDiagramModel.participants = this.participants;
+        sequenceDiagramModel.messages = this.messages;
 
         Logger.logResetIndentation();            
         
-        return sdm;
+        return sequenceDiagramModel;
     }
 
     // ****************************************************************************************************************************
@@ -173,17 +190,17 @@ export class CallAnalyzer {
          * @param position - The position within the document.
          * @returns A Promise that resolves to a Participant object with the composed name.
          */
-        const composeParticipantName = async (uri: vscode.Uri, position: vscode.Position): Promise<Participant> => {
-            const pn = new Participant();
+        const identifyParticipant = async (uri: vscode.Uri, position: vscode.Position): Promise<Participant> => {
+            const participant = new Participant();
 
             // Find the name of the class containing the method from which to call originates
-            pn.className = await CodeAnalyzer.findClassName(uri, position) || '';
+            participant.class = await CodeAnalyzer.findClassName(uri, position) || '';
 
-            if (pn.className.length === 0) { // Item is not in a class
+            if (participant.class.length === 0) { // Item is not in a class
                 // Go with the module name (the containing file's name without extension)
                 const moduleName: string | undefined = uri.path.split('/').pop()?.split('?')[0];
                 if (moduleName) {
-                    pn.className = moduleName;
+                    participant.class = moduleName;
                 }
             }                                    
 
@@ -197,10 +214,9 @@ export class CallAnalyzer {
                 return uriString.replace(CallAnalyzer.workspaceRoot(), "");
             }
 
+            participant.namespace = trimUri(uri);
 
-            pn.qualifiedName = `${trimUri(uri)}/${pn.className}`;    
-
-            return pn;
+            return participant;
         }
         
         // ========================================================================================================================
@@ -268,29 +284,29 @@ export class CallAnalyzer {
             // Compose names for the caller ---------------------------------------------------------------------------------------
 
             // Find the name of the class and object from which the call originates and add it to the list of participants
-            const caller: Participant = await composeParticipantName(node.uri, node.selectionRange.start);
-            caller.fullNameWithAlias = `${caller.qualifiedName} as ${caller.qualifiedName}<br>:${myName}`;
-
-            // Add the callee object to the list of participants
-            this.participants.add(caller.fullNameWithAlias);
+            let caller: Participant = await identifyParticipant(node.uri, node.selectionRange.start);
+            caller.object = myName;
+            
+            caller = this.participants.add(caller);
 
 
             // Compose names for the callee ---------------------------------------------------------------------------------------
             
             // Find the name of the class and object from which the call originates and add it to the list of participants
-            const callee: Participant = await composeParticipantName(call.to.uri, call.to.selectionRange.start);
+            let callee: Participant = await identifyParticipant(call.to.uri, call.to.selectionRange.start);
 
             if (callItemInfo.objectName === "self" && depth > 1) { // Nested call to same object
                 // In some nested call a method calls another of the same class' same object, so don't use self as the object name
                 // as it would create another participant
-                callee.fullNameWithAlias = `${callee.qualifiedName} as ${callee.qualifiedName}<br>:${myName}`;
+                callee.object = myName;
             } else {
                 // Here another object is targeted so let's just use the variable or property name preceding the function name
-                callee.fullNameWithAlias = `${callee.qualifiedName} as ${callee.qualifiedName}<br>:${callItemInfo.objectName}`;
+                callee.object = callItemInfo.objectName;
             }
 
             // Add the callee object to the list of participants
-            this.participants.add(callee.fullNameWithAlias);
+            callee = this.participants.add(callee);
+            
 
             
             // Build up message compartments --------------------------------------------------------------------------------------            
@@ -302,7 +318,7 @@ export class CallAnalyzer {
             
             message = call.to.name;
 
-            if (caller.qualifiedName === callee.qualifiedName) {
+            if (caller.qualifiedName() === callee.qualifiedName()) {
                 messageType = "->>+";
                 returnMessageType = "-->>-";
             } else {
@@ -311,19 +327,19 @@ export class CallAnalyzer {
             }
 
             // Compartments for log message
-            callFromToken = `${Logger.hiObject(caller.className)}.${callFromToken}`
-            callToToken = Logger.hiObject(callee.className)
+            callFromToken = `${Logger.hiObject(caller.class)}.${callFromToken}`
+            callToToken = Logger.hiObject(callee.class)
             callNameToken = Logger.hiMethod(call.to.name)            
 
             // Add messages -------------------------------------------------------------------------------------------------------
 
             // Outgoing call
             beforeNestedCalls.push(
-                `\t${caller.qualifiedName} ${messageType} ${callee.qualifiedName}: ${this.messageSequenceNumber}. ${message}(${TextFormatter.wrapText(callItemInfo.parameters)})`);
+                `\t${caller.id} ${messageType} ${callee.id}: ${this.messageSequenceNumber}. ${message}(${TextFormatter.wrapText(callItemInfo.parameters)})`);
             
             // Return call
             afterNestedCalls.unshift(
-                `\t${callee.qualifiedName} ${returnMessageType} ${caller.qualifiedName}: ${this.messageSequenceNumber}. : return value`);
+                `\t${callee.id} ${returnMessageType} ${caller.id}: ${this.messageSequenceNumber}. : return value`);
 
             Logger.log(`Call ${callIx} added as ${this.messageSequenceNumber}: ${callFromToken} ->> ${callToToken}: ${callNameToken}`); 
 
@@ -388,24 +404,21 @@ export class CallAnalyzer {
         }
 
         // Find the common prefix that we can cut from fully qualified file names
-        let commonRoot = DocumentManager.findLongestCommonPrefix(Array.from(this.participants));
+        let commonRoot = CallAnalyzer.getCommonRoot([...this.participants.values()].map(p => p.namespace));
 
-        // Remove the common part and make a copy of the participants list with pretty names
-        const prettyParticipants = new Set<string>();
+        // Remove the common part and make a copy of the participants list with pretty names        
         this.participants.forEach(participant => {
-            let prettyName = participant.replace(commonRoot, "");
+            let prettyName = participant.namespace.replace(commonRoot, "");
             while (true) {
                 const evenPrettierName = prettyName.replace(commonRoot, "");
                 if (evenPrettierName === prettyName) {
                     break;
                 }
                 prettyName = evenPrettierName;
-            } 
+            }; 
 
-            prettyParticipants.add(`    participant ${prettyName}`);
+            participant.namespace = prettyName;
         });
-
-        this.participants = prettyParticipants;
         
         // Remove the common part and make a copy of the messages list with pretty names
         const prettyMessages: string[] = [""];

@@ -24,6 +24,28 @@ export class CodeAnalyzer {
     }
 
     // ****************************************************************************************************************************
+    /**
+     * Retrieves the selected functions for call hierarchy analysis.
+     * @returns A Promise that resolves to an array of CallHierarchyItem representing the selected functions.
+     */
+    public static async getSelectedFunctions() {
+        const activeTextEditor = vscode.window.activeTextEditor!
+        const entry: vscode.CallHierarchyItem[] = await vscode.commands.executeCommand(
+            'vscode.prepareCallHierarchy',
+            activeTextEditor.document.uri,
+            activeTextEditor.selection.active
+        )
+        if (!entry || !entry[0]) {
+            const msg = "Can't resolve entry function. Probably it's just a timeout, try again."
+            vscode.window.showErrorMessage(msg)
+            throw new Error(msg)
+        }
+    
+        return entry
+    }
+
+
+    // ****************************************************************************************************************************
     /** 
      * Finds the name of the class containing a given position in a VS Code document.
      * @param uri - The URI of the document to search.

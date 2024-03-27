@@ -74,7 +74,9 @@ export class TextFormatter {
                 // Tells whether the line can be broken nearby forward
                 const findNearbySpaceForward = (limit: number = TextFormatter.softWrappingLimit) => {
                     let ix = 0;
-                    while (++ix < limit && !canBreakLineAtPosition(chunkStartsAt + 1 + lengthAbout + ix)) {
+                    while (
+                        ++ix < limit 
+                        && !canBreakLineAtPosition(chunkStartsAt + 1 + lengthAbout + ix)) {
                         ;
                     }
                 }
@@ -82,7 +84,11 @@ export class TextFormatter {
                 // Tells whether the line can be broken nearby backward
                 const findNearbySpaceBackward = () => {
                     let ix = 0;
-                    while (--ix < TextFormatter.softWrappingLimit && !canBreakLineAtPosition(chunkStartsAt + 1 + lengthAbout + ix)) {
+                    // We can go backwards no more than what soft wrapping limit enables,
+                    // but we also shall make sure we don't cross the previous line break
+                    while (
+                        --ix > -1 * Math.min(TextFormatter.softWrappingLimit, chunkEndsAt - chunkStartsAt) 
+                        && !canBreakLineAtPosition(chunkStartsAt + 1 + lengthAbout + ix)) {
                         ;
                     }
                 }
