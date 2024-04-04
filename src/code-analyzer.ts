@@ -136,8 +136,8 @@ export class CodeAnalyzer {
         
         // The followings only makes sense for functions
         if (itemInfo.isFunction) {
-            itemInfo = CodeAnalyzer.identifyInvokedObject(line, itemNameRange, itemInfo)
-            itemInfo = CodeAnalyzer.collectParameters(document, itemNameRange, itemInfo);
+            itemInfo = CodeAnalyzer.identifyInvokedObject(line, itemNameRange, itemInfo)            
+            itemInfo = CodeAnalyzer.collectParameters(document, itemNameRange, itemInfo);            
         }
 
         return itemInfo;
@@ -308,12 +308,16 @@ export class CodeAnalyzer {
             }
         }
 
-        itemInfo.parameters = params;
+        // Only include parameter string if not requested to be omitted
+        const omitParams = vscode.workspace.getConfiguration().get<boolean>('py-sequence-reverse.omitParams') ?? false                
+        itemInfo.parameters = omitParams ? "" : params;        
+        
         const paramRange: vscode.Range =        
             new vscode.Range(
                 new vscode.Position(paramsStartLine, paramsStartCol), 
                 new vscode.Position(paramsEndLine, paramsEndCol + 1)
-                );
+                );                
+
         itemInfo.parametersRange = paramRange;
         
         return itemInfo;

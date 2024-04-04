@@ -69,6 +69,21 @@
                     "default": 5,
                     "minimum": 1,
                     "maximum": 32
+                },
+                "py-sequence-reverse.omitParams": {
+                    "description": "Check to omit function parameters",
+                    "type": "boolean",
+                    "default": false
+                },
+                "py-sequence-reverse.preferSignatureOverParams": {
+                    "description": "Check to include the signature of the callee rather than parameter values (only applies when parameters are not omitted)",
+                    "type": "boolean",
+                    "default": false
+                },
+                "py-sequence-reverse.returnLabel": {
+                    "description": "Label to show on return messages. To comply with Mermaid, the empty value is replaced by a space.",
+                    "type": "string",
+                    "default": "return value"
                 }
             }
         }

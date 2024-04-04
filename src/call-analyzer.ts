@@ -384,11 +384,13 @@ export class CallAnalyzer {
 
             // Outgoing call
             beforeNestedCalls.push(
-                `\t${caller.id} ${messageType} ${callee.id}: ${this.messageSequenceNumber}. ${message}(${TextFormatter.wrapText(callItemInfo.parameters)})`);
+                `\t${caller.id} ${messageType} ${callee.id}: ${this.messageSequenceNumber} ${message}${TextFormatter.wrapText(callItemInfo.parameters)}`);
             
             // Return call
+            let returnLabel = vscode.workspace.getConfiguration().get<boolean>('py-sequence-reverse.returnLabel') ?? "return value"
+            if (returnLabel === "") { returnLabel = " "; }
             afterNestedCalls.unshift(
-                `\t${callee.id} ${returnMessageType} ${caller.id}: ${this.messageSequenceNumber}. : return value`);
+                `\t${callee.id} ${returnMessageType} ${caller.id}: ${this.messageSequenceNumber}: ${returnLabel}`);
 
             Logger.log(`Call ${callIx} added as ${this.messageSequenceNumber}: ${callFromToken} ->> ${callToToken}: ${callNameToken}`); 
 
