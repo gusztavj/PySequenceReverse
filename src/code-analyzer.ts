@@ -109,7 +109,7 @@ export class CodeAnalyzer {
      * @param itemNameRange - The range containing the called item's name.
      * @returns A Promise that resolves to CallItemInfo object with details about the function call.
      */
-    public static async getCallItemInfo(uri: vscode.Uri, itemNameRange: vscode.Range): Promise<CallItemInfo> {
+    public static async getCallItemInfo(uri: vscode.Uri, itemNameRange: vscode.Range, callee: vscode.CallHierarchyItem): Promise<CallItemInfo> {
         
         // Get the document and the line containing the call
         const document: vscode.TextDocument = await vscode.workspace.openTextDocument(uri);
@@ -136,8 +136,15 @@ export class CodeAnalyzer {
         
         // The followings only makes sense for functions
         if (itemInfo.isFunction) {
-            itemInfo = CodeAnalyzer.identifyInvokedObject(line, itemNameRange, itemInfo)            
-            itemInfo = CodeAnalyzer.collectParameters(document, itemNameRange, itemInfo);            
+            itemInfo = CodeAnalyzer.identifyInvokedObject(line, itemNameRange, itemInfo);                        
+                        
+            const preferSignatureOverParams = vscode.workspace.getConfiguration().get<boolean>('py-sequence-reverse.Diagram: Show Signatures Instead Parameters') ?? false                
+            
+            if (preferSignatureOverParams) {                
+                itemInfo = CodeAnalyzer.collectParameters(document, callee.selectionRange, itemInfo);
+            } else {
+                itemInfo = CodeAnalyzer.collectParameters(document, itemNameRange, itemInfo);            
+            }
         }
 
         return itemInfo;
@@ -245,10 +252,6 @@ export class CodeAnalyzer {
         // Basically we'll grab what comes after the opening parenthesis right after the method name, and collect anything
         // until that parenthesis is closed.
 
-        // Get the position of the last character of the file
-        let lastPosition = new vscode.Position(document.lineCount - 1, document.lineAt(document.lineCount-1).text.length);
-        
-        
         let parenthesesOpen = 0;
         let params: string = "";
         
@@ -309,7 +312,7 @@ export class CodeAnalyzer {
         }
 
         // Only include parameter string if not requested to be omitted
-        const omitParams = vscode.workspace.getConfiguration().get<boolean>('py-sequence-reverse.omitParams') ?? false                
+        const omitParams = vscode.workspace.getConfiguration().get<boolean>('py-sequence-reverse.Diagram: Omit Message Details') ?? false                
         itemInfo.parameters = omitParams ? "" : params;        
         
         const paramRange: vscode.Range =        

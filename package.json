@@ -34,53 +34,54 @@
         },
         "configuration": {
             "title": "PySequenceReverse",
-            "properties": {
-                "py-sequence-reverse.ignoreOnGenerate": {
-                    "description": "Glob patterns of files to ignore when fetching call hierarchy for the call graph",
+            "properties": {              
+
+                "py-sequence-reverse.Ignore: Ignore on Generate": {
+                    "description": "Glob patterns of files to ignore when fetching call hierarchy for the call graph.",
                     "type": "array",
                     "items": {
                         "type": "string"
                     },
                     "default": []
                 },
-                "py-sequence-reverse.ignoreNonWorkspaceFiles": {
-                    "description": "Ignore files that are not part of the current workspace",
+                "py-sequence-reverse.Ignore: Ignore Non-Workspace Files": {
+                    "description": "Ignore files that are not part of the current workspace.",
                     "type": "boolean",
                     "default": true
                 },
-                "py-sequence-reverse.ignoreAnalyzingThirdPartyPackages": {
-                    "description": "Don't analyze files/functions located in the physical or virtual environments (3rd party packages)",
+                "py-sequence-reverse.Ignore: Ignore Analyzing Third-Party Packages": {
+                    "description": "Don't analyze files/functions located in the physical or virtual environments (3rd party packages). See Python settings for managing these directories.",
                     "type": "boolean",
                     "default": true
                 },
-                "py-sequence-reverse.saveAutomatically": {
-                    "description": "Save diagram automatically rather than asking for a file name",
+                "py-sequence-reverse.Files: Save Diagram File Automatically": {
+                    "description": "Save diagram automatically rather than asking for a file name.",
                     "type": "boolean",
                     "default": false
                 },
-                "py-sequence-reverse.openAutomatically": {
-                    "description": "Open saved diagram automatically (if supported previewer extension is installed)",
+                "py-sequence-reverse.Files: Open Diagram Automatically": {
+                    "description": "Open saved diagram automatically (if supported previewer extension is installed).",
                     "type": "boolean",
                     "default": true
                 },
-                "py-sequence-reverse.maxDepth": {
-                    "description": "Maximum call depth (1 to 32)",
+                "py-sequence-reverse.Diagram: Max Call Depth": {
+                    "description": "Maximum call depth (1 to 32).",
                     "type": "integer",
                     "default": 5,
                     "minimum": 1,
                     "maximum": 32
                 },
-                "py-sequence-reverse.omitParams": {
-                    "description": "Check to omit function parameters",
+                "py-sequence-reverse.Diagram: Omit Message Details": {
+                    "description": "Check to omit function parameters and only display the name of the called function.",
                     "type": "boolean",
                     "default": false
                 },
-                "py-sequence-reverse.preferSignatureOverParams": {
-                    "description": "Check to include the signature of the callee rather than parameter values (only applies when parameters are not omitted)",
+                "py-sequence-reverse.Diagram: Show Signatures Instead Parameters": {
+                    "description": "Check to include the signature of the called function rather than parameter values (only applies when parameters are not omitted).",
                     "type": "boolean",
                     "default": false
                 },
-                "py-sequence-reverse.returnLabel": {
+                "py-sequence-reverse.Diagram: Return Message Label": {
                     "description": "Label to show on return messages. To comply with Mermaid, the empty value is replaced by a space.",
                     "type": "string",
                     "default": "return value"

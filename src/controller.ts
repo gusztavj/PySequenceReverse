@@ -43,8 +43,8 @@ export class Controller {
         // Obtain configuration data ------------------------------------------------------------------------------------------                        
         const configs = vscode.workspace.getConfiguration()
 
-        const saveAutomatically = configs.get<string[]>('py-sequence-reverse.saveAutomatically') ?? false;
-        const openAutomatically = configs.get<string[]>('py-sequence-reverse.openAutomatically') ?? true;        
+        const saveAutomatically = configs.get<string[]>('py-sequence-reverse.Files: Save Diagram File Automatically') ?? false;
+        const openAutomatically = configs.get<string[]>('py-sequence-reverse.Files: Open Diagram Automatically') ?? true;        
 
         // Create a document manager and file URI
         const docMgr = new DocumentManager();

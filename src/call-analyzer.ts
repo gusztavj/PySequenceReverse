@@ -97,7 +97,7 @@ export class CallAnalyzer {
         Logger.log('*'.repeat(80));
 
 
-        this.maxCallDepth = vscode.workspace.getConfiguration().get<number>('py-sequence-reverse.maxDepth') ?? 32
+        this.maxCallDepth = vscode.workspace.getConfiguration().get<number>('py-sequence-reverse.Diagram: Max Call Depth') ?? 32
         // Start traversal and obtain sequence messages for the diagram
         const sequenceMessages = await this.traverse(sequenceDiagramModel.functionAnalyzed(), "self", "", 0)
 
@@ -175,7 +175,7 @@ export class CallAnalyzer {
                     calls.map(
                         async call => ({
                             call,
-                            info: await CodeAnalyzer.getCallItemInfo(node.uri, call.fromRanges[0])
+                            info: await CodeAnalyzer.getCallItemInfo(node.uri, call.fromRanges[0], call.to)
                         })
                     );
             
@@ -324,7 +324,7 @@ export class CallAnalyzer {
             // Obtain information on the call -------------------------------------------------------------------------------------
             
             Logger.log(`Getting item info for ${calledItem.name} in ${calledItem.uri} at ${call.fromRanges[0].start.line}:${call.fromRanges[0].start.character}`)            
-            const callItemInfo: CallItemInfo = await CodeAnalyzer.getCallItemInfo(node.uri, call.fromRanges[0])
+            const callItemInfo: CallItemInfo = await CodeAnalyzer.getCallItemInfo(node.uri, call.fromRanges[0], call.to)
             
             // Increase the last tag of the sequence number as we are about to add a message at the same level
             localSequenceNumberIx++;
@@ -387,7 +387,7 @@ export class CallAnalyzer {
                 `\t${caller.id} ${messageType} ${callee.id}: ${this.messageSequenceNumber} ${message}${TextFormatter.wrapText(callItemInfo.parameters)}`);
             
             // Return call
-            let returnLabel = vscode.workspace.getConfiguration().get<boolean>('py-sequence-reverse.returnLabel') ?? "return value"
+            let returnLabel = vscode.workspace.getConfiguration().get<boolean>('py-sequence-reverse.Diagram: Return Message Label') ?? "return value"
             if (returnLabel === "") { returnLabel = " "; }
             afterNestedCalls.unshift(
                 `\t${callee.id} ${returnMessageType} ${caller.id}: ${this.messageSequenceNumber}: ${returnLabel}`);
@@ -527,7 +527,7 @@ export class CallAnalyzer {
 
         // Check ignore globals option ----------------------------------------------------------------------------------------
         
-        const ignoreGlobs = configs.get<string[]>('py-sequence-reverse.ignoreOnGenerate') ?? []
+        const ignoreGlobs = configs.get<string[]>('py-sequence-reverse.Ignore: Ignore on Generate') ?? []
 
         for (const glob of ignoreGlobs) { // Some globals are requested to be ignored from the diagram
             if (minimatch(calledItem.uri.fsPath, glob)) {                    
@@ -538,7 +538,7 @@ export class CallAnalyzer {
 
         // Check ignore non-workspace files option ---------------------------------------------------------------------------
         
-        const ignoreNonWorkspaceFiles = configs.get<boolean>('py-sequence-reverse.ignoreNonWorkspaceFiles') ?? false
+        const ignoreNonWorkspaceFiles = configs.get<boolean>('py-sequence-reverse.Ignore: Ignore Non-Workspace Files') ?? false
 
         if (ignoreNonWorkspaceFiles) { // Methods located in files out of the workspace folders shall be excluded
             let isInWorkspace = false
@@ -556,7 +556,7 @@ export class CallAnalyzer {
         // Check ignore (v)env folders option ---------------------------------------------------------------------------------            
 
         // See if the the user chose to omit calls of functions in/to 3rd party and built-in packages
-        const ignoreAnalyzingThirdPartyPackages = configs.get<boolean>('py-sequence-reverse.ignoreAnalyzingThirdPartyPackages') ?? false
+        const ignoreAnalyzingThirdPartyPackages = configs.get<boolean>('py-sequence-reverse.Ignore: Ignore Analyzing Third-Party Packages') ?? false
 
         if (ignoreAnalyzingThirdPartyPackages) { // Requested to not follow functions located in files under (v)env directories
 
