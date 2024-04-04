@@ -170,6 +170,11 @@ export class CallItemInfo {
     /**
      * Parameters or arguments passed to the callee.
      */
-    public parameters: string = ""
+    public parameters: string = "";
+
+    /**
+     * The range specifying the locations where the parameters start and end
+     */
+    public parametersRange!: vscode.Range;
     
 }

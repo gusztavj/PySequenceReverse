@@ -1,6 +1,7 @@
 import * as vscode from 'vscode'
 
 import { CallItemInfo } from './entities';
+import { debugPort } from 'process';
 
 
 
@@ -105,7 +106,7 @@ export class CodeAnalyzer {
      * 
      * Retrieves information about a function call at a specific position in a VS Code document.
      * @param uri - The URI of the document to analyze.
-     * @param itemNameRange - The range containing the function call name.
+     * @param itemNameRange - The range containing the called item's name.
      * @returns A Promise that resolves to CallItemInfo object with details about the function call.
      */
     public static async getCallItemInfo(uri: vscode.Uri, itemNameRange: vscode.Range): Promise<CallItemInfo> {
@@ -168,8 +169,7 @@ export class CodeAnalyzer {
             // Get the remainder of this line and the next if any
             restOfLineWithNextLine = 
                 line.text.substring(itemNameRange.start.character)
-                .concat(`\n`)
-                .concat(document.lineCount > line.lineNumber ? document.lineAt(itemNameRange.start.line + 1).text : "");
+                .concat(document.lineCount > line.lineNumber + 1 ? ` ${document.lineAt(line.lineNumber + 1).text}` : "");
 
             // Match if the name is followed by whitespaces and then an opening parenthesis
             const continuesWithOpenPara = restOfLineWithNextLine.match(/[\s\r\n]*\(/);
@@ -248,35 +248,74 @@ export class CodeAnalyzer {
         // Get the position of the last character of the file
         let lastPosition = new vscode.Position(document.lineCount - 1, document.lineAt(document.lineCount-1).text.length);
         
-        // Get the range describing the whole document from right after the function name
-        let rangeOfRest = new vscode.Range(itemNameRange.end, lastPosition);
-                
-        // Load all the text and remove line breaks
-        const remainingContents = document.getText(rangeOfRest).replace('\n', "");
-
-        let parenthesesOpen = 1;
-        let ix = 1;
+        
+        let parenthesesOpen = 0;
         let params: string = "";
-        let currentCharacter;
+        
+        let currentLine: number = itemNameRange.end.line;
+        let currentColumn: number = itemNameRange.end.character - 1;
+        let currentCharacter: string = "";
+        
+        let paramsStartLine: number = 0;
+        let paramsStartCol: number = 0;
+        let paramsEndLine: number = 0;
+        let paramsEndCol: number = 0;
         
         // Start counting parentheses, and when all is closed we collected the parameters
-        while (parenthesesOpen > 0) {
-            currentCharacter = remainingContents[ix++];
+        while (parenthesesOpen >= 0) {
 
-            if (currentCharacter === "(") {
-                parenthesesOpen++;
-            } else if (currentCharacter === ")") {
-                parenthesesOpen--;
+            // Try to move cursor ahead
+            if (currentColumn < document.lineAt(currentLine).range.end.character) { // More characters in current line available
+                // There's still more in the current line
+                currentColumn++;
             }
+            else if (currentLine < document.lineCount) { // More lines available
+                // Line ended, but there is at least one more line
+                currentLine++;
+                currentColumn = 0;
+            }
+            else { // End of doc
+
+                // The very end. We should never reach this point in syntactically correct code
+                // as it means the opening parenthesis of the function call analyzed has not been closed.
+                // Having no better choice, we'll return everything we collected so far.
+                break;
+            }
+
+            // Get the current char
+            currentCharacter = document.lineAt(currentLine).text.charAt(currentColumn)
+
+            // Check if we come to something special
+            if (currentCharacter === "(") { // One more parenthesis opened                
+                if (parenthesesOpen === 0) { // First para after the function name
+                    // Get the starting location of parameters (excluding the parenthesis)
+                    paramsStartLine = currentLine;
+                    paramsStartCol = currentColumn;
+                }
+                parenthesesOpen++;
+            } else if (currentCharacter === ")") { // A parenthesis closed
+                parenthesesOpen--;
+            }            
             
-            // This character is going to be part of the parameters unless it is the final enclosing parenthesis
-            if (parenthesesOpen > 0) {
-                params += currentCharacter;
+            // "Linearize" the character and add to the params
+            currentCharacter.replace(/\r\n\t/, " ");
+            params += currentCharacter;
+
+            if (parenthesesOpen === 0) { // Yay, everything closed
+                paramsEndLine = currentLine;
+                paramsEndCol = currentColumn;
+                break;
             }
         }
 
         itemInfo.parameters = params;
-
+        const paramRange: vscode.Range =        
+            new vscode.Range(
+                new vscode.Position(paramsStartLine, paramsStartCol), 
+                new vscode.Position(paramsEndLine, paramsEndCol + 1)
+                );
+        itemInfo.parametersRange = paramRange;
+        
         return itemInfo;
     }
 }

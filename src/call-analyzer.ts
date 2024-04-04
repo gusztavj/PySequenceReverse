@@ -114,6 +114,7 @@ export class CallAnalyzer {
         return sequenceDiagramModel;
     }
 
+   
     // ****************************************************************************************************************************
     /**
      * Traverses the call hierarchy, analyzes outgoing calls, and composes messages for sequence diagrams.
@@ -153,35 +154,81 @@ export class CallAnalyzer {
             // For example, is foo() is called twice, from line 7 and line 13 of something(), while bar is called once from 
             // line 9, we need to reconstruct the sequence of foo(), bar(), foo().
             
+
+            // Declare stuff ------------------------------------------------------------------------------------------------------
+            let calls: vscode.CallHierarchyOutgoingCall[] = [];
+
+            // ---------------------------------------------------------------------------------------------------------------------
+            /**
+             * Sorts method calls in a way that if method call is located within the parameters of another, this one comes first
+             * as it is actually called first. Otherwise the one above the other comes first.
+             * 
+             * The method shall be async as we need to collect the parameters for each call, which requires async/await call to VS
+             * to open the containing document.
+             * 
+             * @returns A Promise that resolves to an array of sorted CallHierarchyOutgoingCall objects.
+             */
+            const sortCalls = async (): Promise<vscode.CallHierarchyOutgoingCall[]> => {
+
+                // Map each call to a promise that resolves to an object containing the call and its CallItemInfo
+                const callsWithInfoPromises = 
+                    calls.map(
+                        async call => ({
+                            call,
+                            info: await CodeAnalyzer.getCallItemInfo(node.uri, call.fromRanges[0])
+                        })
+                    );
             
+                // Wait for all promises to resolve
+                const callsWithInfo = await Promise.all(callsWithInfoPromises);
+            
+                // Now sort the calls based on the desired criteria, for example, the start position of the fromRanges
+                callsWithInfo.sort((a, b) => {
+
+                    // Check if one call is located in the parameters of the other (only applies if the assumed container is a function call)
+                    //
+                    if (a.info.isFunction && a.info.parametersRange.contains(b.call.fromRanges[0])) {
+                        // Call to 'b' is within the parameters of call 'a', so that call to 'b' is executed first
+                        return 1;
+                    } else if (b.info.isFunction && b.info.parametersRange.contains(a.call.fromRanges[0])) {
+                        // Call to 'a' is within the parameters of call 'b', so that call to 'a' is executed first
+                        return -1;
+
+                    // From here no one contains the other so location decides
+                    //
+                    } else if (a.call.fromRanges[0].start.isBefore(b.call.fromRanges[0].start)) {
+                        // Call to a comes first
+                        return -1;
+                    } else if (a.call.fromRanges[0].start.isAfter(b.call.fromRanges[0].start)) {
+                        // Call to a comes later
+                        return 1;
+                    } else {
+                        // Tie, the two calls are the same
+                        return 0;
+                    }
+                });
+            
+                // Extract the sorted calls
+                return calls = callsWithInfo.map(cwi => cwi.call);
+            }
+
+            // Body of flattenCalls -----------------------------------------------------------------------------------------------
+                    
             // Get the calls from VS Code. Note that calls to the same method are grouped
             const groupedCalls: vscode.CallHierarchyOutgoingCall[] = await vscode.commands.executeCommand('vscode.provideOutgoingCalls', node);
-
-            let calls: vscode.CallHierarchyOutgoingCall[] = [];
             
             // Flatten out the list and make sure to have an item for all call locations as those may belong to different
             // objects and may come sooner or later in the sequence of calls
-            groupedCalls.forEach(gc => {
+            groupedCalls.forEach(gc => {                
                 gc.fromRanges.forEach(fr => {
-                    calls.push(new vscode.CallHierarchyOutgoingCall(gc.to, [fr]))
+                    if (!CallAnalyzer.shallCallBeSkipped(gc, gc.to).skip) {
+                        calls.push(new vscode.CallHierarchyOutgoingCall(gc.to, [fr]))
+                    }
                 })
             });
 
-            // Set up correct sequence of calls by sorting the calls based on location
-            calls.sort(
-                (a: vscode.CallHierarchyOutgoingCall, b: vscode.CallHierarchyOutgoingCall) =>
-                { 
-                    if (a.fromRanges[0].start.isBefore(b.fromRanges[0].start)) {
-                        return -1;
-                    }
-                    else if (a.fromRanges[0].start.isAfter(b.fromRanges[0].start)) {
-                        return 1;
-                    }
-                    else {
-                        return 0;
-                    }
-                }
-            );
+            // Sort calls to get the order of sequencing
+            calls = await sortCalls();
 
             return calls;
         }
@@ -250,7 +297,6 @@ export class CallAnalyzer {
             let callToToken = "";
             let callNameToken = "";            
 
-
             // Let's rock ---------------------------------------------------------------------------------------------------------
 
             whatsGoingOn += `Call ${callIx}`
@@ -265,7 +311,7 @@ export class CallAnalyzer {
 
             // Check if the call shall be skipped from further analysis -----------------------------------------------------------
             
-            const scr: SkipCheckResult = this.shallCallBeSkipped(call, calledItem);
+            const scr: SkipCheckResult = CallAnalyzer.shallCallBeSkipped(call, calledItem);
             if (scr.skip) {
                 whatsGoingOn += ` ${scr.reason} and is therefore skipped`;
 
@@ -458,7 +504,7 @@ export class CallAnalyzer {
      * Determines whether to skip analyzing a function call based on various criteria.
      * @returns A boolean indicating whether to skip the analysis.
      */
-    protected shallCallBeSkipped(call: vscode.CallHierarchyOutgoingCall, calledItem: CallHierarchyItem): SkipCheckResult {
+    public static shallCallBeSkipped(call: vscode.CallHierarchyOutgoingCall, calledItem: CallHierarchyItem): SkipCheckResult {
 
         // Certain calls may be ignored, based on extension settings. Let's see if this needs to be ignored.
 
@@ -554,6 +600,7 @@ export class CallAnalyzer {
             for (const path of builtinPackagesPaths ?? []) {
                 if (calledItem.uri.fsPath.includes(path)) {
                     isInVenv = true;
+                    break;
                 }
             }
             if (isInVenv) {
