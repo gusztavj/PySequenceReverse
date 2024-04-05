@@ -20,6 +20,12 @@ export class DocumentManager {
     public document(): vscode.TextDocument { return this._document; }
     private _document!: vscode.TextDocument;
 
+    /**
+     * The URI of this document
+     */
+    public uri(): vscode.Uri { return this._uri; }
+    private _uri!: vscode.Uri
+
     // ****************************************************************************************************************************
     /**
      * Finds the longest common prefix among an array of strings.
@@ -67,12 +73,11 @@ export class DocumentManager {
             : undefined;
 
         // Construct default file name
-        // sourcery skip: inline-immediately-returned-variable
         const defaultFileName = 
             vscode.Uri.file(
                 path.join(defaultUri?.fsPath || "", sanitize(sequenceDiagram.title(), {replacement: "-"})) + ".mmd")
         
-        return defaultFileName;
+        return this._uri = defaultFileName;
     }
 
     // ****************************************************************************************************************************
@@ -87,7 +92,6 @@ export class DocumentManager {
         // Construct default file name
         const defaultFileName = this.createDefaultFilename(sequenceDiagram);
 
-        // sourcery skip: inline-immediately-returned-variable
         const uri = await vscode.window.showSaveDialog({
             filters: { 
                 // eslint-disable-next-line @typescript-eslint/naming-convention
@@ -97,6 +101,8 @@ export class DocumentManager {
             },
             defaultUri: defaultFileName // Set the default save location
         });
+        
+        if (uri) { this._uri = uri; }
 
         return uri;
     }
@@ -105,12 +111,16 @@ export class DocumentManager {
     /**
      * Saves the diagram contents to a file with the provided filename.
      * 
-     * @param {string} filename - The name of the file to save the diagram contents to.
      * @param {string} contents - The contents of the diagram to be saved.
      * @returns {Promise<void>} A Promise that resolves when the diagram is saved successfully.
      */
-    public async saveDiagram(filename: string, contents: string): Promise<boolean> {
+    public async saveDiagram(contents: string): Promise<boolean> {
 
+        if (!this.uri()) {
+            return false;
+        }
+        
+        const filename: string = this.uri().fsPath;
         let success: boolean = false;
 
         try {
@@ -129,19 +139,18 @@ export class DocumentManager {
     // ****************************************************************************************************************************
     /**
      * Opens a Mermaid diagram file with a preview in the editor.
-     * @param uri - The URI of the Mermaid diagram file to open.
      * @returns void
      */
-    public async openDiagramWithPreview(uri: vscode.Uri) {
-        if (!uri) {
+    public async openDiagramWithPreview() {
+        if (!this.uri()) {
             return;
         }
 
-        this._document = await vscode.workspace.openTextDocument(uri);
+        this._document = await vscode.workspace.openTextDocument(this.uri());
 
         if (this._document) {
-            await vscode.window.showTextDocument(this.document());
-            await vscode.commands.executeCommand('mermaid-editor.preview', uri);    
+            await vscode.window.showTextDocument(this.document(), vscode.ViewColumn.One);
+            await vscode.commands.executeCommand('mermaid-editor.preview', this.uri());    
         }
     }
 
@@ -150,17 +159,15 @@ export class DocumentManager {
      * Saves the diagram as an image based on the provided URI.
      * 
      * If the document is not already open, it opens the document before generating and saving the image.
-     * 
-     * @param {vscode.Uri} uri - The URI of the diagram to save as an image.
      */
-    public async saveDiagramAsImage(uri: vscode.Uri) {
-        if (!uri) {
+    public async saveDiagramAsImage() {
+        if (!this.uri()) {
             return;
         }
 
         // Make sure the doc is open (the user could have closed it)
         if (!this.document()) {
-            this._document = await vscode.workspace.openTextDocument(uri);            
+            this._document = await vscode.workspace.openTextDocument(this.uri());            
         }        
         
         await vscode.window.showTextDocument(this.document(), vscode.ViewColumn.One);
@@ -180,7 +187,7 @@ export class DocumentManager {
             return;
         }
         
-        await vscode.window.showTextDocument(this.document());
+        await vscode.window.showTextDocument(this.document(), vscode.ViewColumn.One);
         await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
     }
 }

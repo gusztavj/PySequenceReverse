@@ -62,14 +62,14 @@ export class Controller {
         if (fileUri) { // The user selected a file name or we could create the file name
 
             // Save the diagram to a file from the built-up lists 
-            let savedSuccessfully: boolean = await docMgr.saveDiagram(fileUri.fsPath, sdm.contents())
+            let savedSuccessfully: boolean = await docMgr.saveDiagram(sdm.contents())
             
             if (savedSuccessfully && openAutomatically) {
                 // Open the preview
-                await docMgr.openDiagramWithPreview(fileUri);
+                await docMgr.openDiagramWithPreview();
 
                 if (saveAutomatically) {
-                    await docMgr.saveDiagramAsImage(fileUri);
+                    await docMgr.saveDiagramAsImage();
                     await docMgr.closeDiagram();
                 }
             }
