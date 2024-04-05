@@ -2,7 +2,7 @@
     "name": "py-sequence-reverse",
     "displayName": "PySequenceReverse Sequence Diagram Builder for Python",
     "description": "Create Mermaid speaking sequence diagrams for Python functions",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "publisher": "t1nker",
     "engines": {
         "vscode": "^1.65.0",
@@ -34,8 +34,7 @@
         },
         "configuration": {
             "title": "PySequenceReverse",
-            "properties": {              
-
+            "properties": {
                 "py-sequence-reverse.Ignore: Ignore on Generate": {
                     "description": "Glob patterns of files to ignore when fetching call hierarchy for the call graph.",
                     "type": "array",
