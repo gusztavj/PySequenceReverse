@@ -99,7 +99,8 @@ export class CallAnalyzer {
 
         this.maxCallDepth = vscode.workspace.getConfiguration().get<number>('py-sequence-reverse.Diagram: Max Call Depth') ?? 32
         // Start traversal and obtain sequence messages for the diagram
-        const sequenceMessages = await this.traverse(sequenceDiagramModel.functionAnalyzed(), "self", "", 0)
+        const subject = sequenceDiagramModel.functionAnalyzed()        
+        const sequenceMessages = await this.traverse(sequenceDiagramModel.functionAnalyzed(), `${subject.name}()`, "", 0)
 
         // Add the obtained messages to the diagram, if there is any
         this.messages?.push(...sequenceMessages ?? [])
@@ -344,7 +345,7 @@ export class CallAnalyzer {
             // Find the name of the class and object from which the call originates and add it to the list of participants
             let callee: Participant = await identifyParticipant(call.to.uri, call.to.selectionRange.start);
 
-            if (callItemInfo.objectName === "self" && depth > 1) { // Nested call to same object
+            if (callItemInfo.objectName === "self") { // Nested call to same object
                 // In some nested call a method calls another of the same class' same object, so don't use self as the object name
                 // as it would create another participant
                 callee.object = myName;
@@ -397,7 +398,7 @@ export class CallAnalyzer {
             // Process the callee unless depth limit is reached -------------------------------------------------------------------
 
             if (depth < this.maxCallDepth) {
-                nestedCalls = await this.traverse(calledItem, callItemInfo.objectName, this.messageSequenceNumber, depth + 1);
+                nestedCalls = await this.traverse(calledItem, callee.object, this.messageSequenceNumber, depth + 1);
                 if (nestedCalls === undefined) {
                     beforeNestedCalls.push(
                         `\tNote right of ${callee.id}: Further calls ignored for reaching max depth`

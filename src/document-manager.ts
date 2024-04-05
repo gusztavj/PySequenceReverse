@@ -10,9 +10,15 @@ import { CodeAnalyzer } from './code-analyzer';
 // ################################################################################################################################
 export class DocumentManager {
 
-
-    private _document!: vscode.TextDocument;
+    /**
+     * Returns the TextDocument containing the given file
+     * 
+     * This method retrieves and returns the TextDocument object that is stored within this object.
+     * 
+     * @returns {vscode.TextDocument} The TextDocument associated with this object.
+     */
     public document(): vscode.TextDocument { return this._document; }
+    private _document!: vscode.TextDocument;
 
     // ****************************************************************************************************************************
     /**
@@ -155,9 +161,9 @@ export class DocumentManager {
         // Make sure the doc is open (the user could have closed it)
         if (!this.document()) {
             this._document = await vscode.workspace.openTextDocument(uri);            
-        }
-
-        await vscode.window.showTextDocument(this.document());
+        }        
+        
+        await vscode.window.showTextDocument(this.document(), vscode.ViewColumn.One);
         await vscode.commands.executeCommand('mermaid-editor.generate.file');    
         vscode.window.showInformationMessage('Diagram image saved successfully!');
     }
