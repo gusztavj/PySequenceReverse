@@ -76,6 +76,11 @@
                     "type": "boolean",
                     "default": false
                 },
+                "py-sequence-reverse.Diagram: Omit Sequence Numbers": {
+                    "description": "Check to omit sequence numbers from messages",
+                    "type": "boolean",
+                    "default": false
+                },
                 "py-sequence-reverse.Diagram: Show Signatures Instead Parameters": {
                     "description": "Check to include the signature of the called function rather than parameter values (only applies when parameters are not omitted).",
                     "type": "boolean",

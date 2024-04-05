@@ -385,13 +385,13 @@ export class CallAnalyzer {
 
             // Outgoing call
             beforeNestedCalls.push(
-                `\t${caller.id} ${messageType} ${callee.id}: ${this.messageSequenceNumber} ${message}${TextFormatter.wrapText(callItemInfo.parameters)}`);
+                `\t${caller.id} ${messageType} ${callee.id}: ${includeSequenceNumbers ? this.messageSequenceNumber + ":" : ""} ${message}${TextFormatter.wrapText(callItemInfo.parameters)}`);
             
             // Return call
             let returnLabel = vscode.workspace.getConfiguration().get<boolean>('py-sequence-reverse.Diagram: Return Message Label') ?? "return value"
             if (returnLabel === "") { returnLabel = " "; }
             afterNestedCalls.unshift(
-                `\t${callee.id} ${returnMessageType} ${caller.id}: ${this.messageSequenceNumber}: ${returnLabel}`);
+                `\t${callee.id} ${returnMessageType} ${caller.id}: ${includeSequenceNumbers ? this.messageSequenceNumber : ""}: ${returnLabel}`);
 
             Logger.log(`Call ${callIx} added as ${this.messageSequenceNumber}: ${callFromToken} ->> ${callToToken}: ${callNameToken}`); 
 
@@ -424,6 +424,8 @@ export class CallAnalyzer {
     
         // Obtain a unique ID
         const id  = `"${node.uri}#${node.name}@${node.range.start.line}:${node.range.start.character}"`
+
+        const includeSequenceNumbers: boolean = !vscode.workspace.getConfiguration().get<boolean>('py-sequence-reverse.Diagram: Omit Sequence Numbers') ?? true
         
         Logger.log(`Traversing ${Logger.hiMethod(node.name)}, PSEQ ${parentSequenceNumber}, FQN ${id}`)
         
