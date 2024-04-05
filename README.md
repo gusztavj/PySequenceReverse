@@ -10,7 +10,7 @@ This extension for VS Code enables you to create UML-compliant Mermaid sequence 
 
 * Improved sequencing. If there is a call like `foo(bar(x))`, from now on `bar()` will come before `foo()` as it is actually called first.
 * Object name matches UML syntax, instead of _class:instance_, _instance :class_ is used from now on.
-* New settings to specify [return message label](#diagram-return-message-label), and to choose what message details you want to see, [parameters](#diagram-show-signatures-instead-parameters), [signatures](#diagram-show-signatures-instead-parameters) or [nothing](#diagram-omit-message-details).
+* New settings to specify [return message label](#diagram-return-message-label), and to choose what message details you want to see, including [sequence numbers](#diagram-omit-sequence-numbers), [parameters](#diagram-show-signatures-instead-parameters), [signatures](#diagram-show-signatures-instead-parameters) or [nothing](#diagram-omit-message-details).
 * Some fixes.
 
 
@@ -89,7 +89,11 @@ Only up this level of nesting will calls be detailed to let you control the amou
 
 #### Diagram: Omit Message Details
 
-When checked, messages won't show details (like arguments passed or function signature), only the message name.
+When checked, messages won't show details (like arguments passed or function signature), only the message name.¸
+
+#### Diagram: Omit Sequence Numbers
+
+When checked, no sequence numbers will be shown in front of messages.
 
 #### Diagram: Show Signatures Instead Parameters
 
